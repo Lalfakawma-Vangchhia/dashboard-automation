@@ -1,0 +1,42 @@
+{
+  "name": "automation-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.2",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "start-http": "react-scripts start",
+    "start-https": "set HTTPS=true&& react-scripts start",
+    "start-server": "npm run build && set HTTPS=true&& node server.js",
+    "start-server-http": "npm run build && node server.js",
+    "start-dev": "set HTTPS=true&& node server.js",
+    "build": "GENERATE_SOURCEMAP=false react-scripts build",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}
