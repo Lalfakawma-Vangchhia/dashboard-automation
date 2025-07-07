@@ -108,6 +108,9 @@ temp/
 /backend/setup_postgresql.bat
 /backend/test_postgresql_connection.py
 
+# Development scripts (not needed for production)
+/backend/dev_scripts/
+
 # IDE files
 .vscode/
 .idea/
