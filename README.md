@@ -29,7 +29,7 @@ OR
    - Click "Enable" to activate auto-reply
 
 4. **How It Works**:
-   - When someone comments on your selected posts, the AI will automatically generate a contextual response
+   - When someone comments on your posts, the AI will automatically generate a contextual response
    - The AI uses the comment content and your optional template to create natural, engaging replies
    - Responses are posted automatically to Facebook
 
