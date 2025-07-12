@@ -20,6 +20,7 @@ from datetime import datetime
 import logging
 from app.services.instagram_service import instagram_service
 from app.services import cloudinary_service
+from uuid import uuid4
 
 
 # Request Models
@@ -139,6 +140,13 @@ class InstagramImageGenerationRequest(BaseModel):
     post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
 
 
+class InstagramCarouselGenerationRequest(BaseModel):
+    """Request model for Instagram carousel generation."""
+    image_prompt: str = Field(..., min_length=1, max_length=500, description="Prompt for carousel images")
+    count: int = Field(default=3, ge=3, le=7, description="Number of images to generate (3-7)")
+    post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
+
+
 router = APIRouter(tags=["social media"])
 
 logger = logging.getLogger(__name__)
@@ -186,6 +194,7 @@ async def get_facebook_status(
 ):
     """Check if user has existing Facebook connections and ensure AUTO_REPLY rule is present/enabled for each page."""
     from app.models.automation_rule import AutomationRule, RuleType, TriggerType
+    from app.services.facebook_service import facebook_service
     facebook_accounts = db.query(SocialAccount).filter(
         SocialAccount.user_id == current_user.id,
         SocialAccount.platform == "facebook",
@@ -204,6 +213,28 @@ async def get_facebook_status(
 
     # --- Ensure AUTO_REPLY rule is present and enabled for each page ---
     for acc in page_accounts:
+        # Fetch latest page info from Facebook
+        try:
+            page_info = None
+            if acc.access_token:
+                async with __import__('httpx').AsyncClient() as client:
+                    resp = await client.get(
+                        f"https://graph.facebook.com/v18.0/{acc.platform_user_id}",
+                        params={
+                            "fields": "fan_count,name,picture",
+                            "access_token": acc.access_token
+                        }
+                    )
+                    if resp.status_code == 200:
+                        page_info = resp.json()
+            if page_info:
+                acc.follower_count = page_info.get("fan_count", acc.follower_count)
+                acc.display_name = page_info.get("name", acc.display_name)
+                acc.profile_picture_url = page_info.get("picture", {}).get("data", {}).get("url", acc.profile_picture_url)
+                db.commit()
+        except Exception as e:
+            logger.warning(f"Could not update follower count for page {acc.platform_user_id}: {e}")
+        # Ensure AUTO_REPLY rule
         auto_reply_rule = db.query(AutomationRule).filter(
             AutomationRule.user_id == current_user.id,
             AutomationRule.social_account_id == acc.id,
@@ -2224,6 +2255,7 @@ async def get_posts(
     platform: Optional[str] = None,
     status: Optional[PostStatus] = None,
     limit: int = 50,
+    social_account_id: int = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2235,6 +2267,9 @@ async def get_posts(
     
     if status:
         query = query.filter(Post.status == status)
+    
+    if social_account_id:
+        query = query.filter(Post.social_account_id == social_account_id)
     
     posts = query.order_by(Post.created_at.desc()).limit(limit).all()
     return posts
@@ -2453,14 +2488,18 @@ async def delete_automation_rule(
 
 @router.get("/social/bulk-composer/content")
 async def get_bulk_composer_content(
+    social_account_id: int = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all bulk composer content for the current user."""
+    """Get all bulk composer content for the current user, optionally filtered by social account."""
     try:
-        content = db.query(BulkComposerContent).filter(
+        query = db.query(BulkComposerContent).filter(
             BulkComposerContent.user_id == current_user.id
-        ).order_by(BulkComposerContent.scheduled_datetime.desc()).all()
+        )
+        if social_account_id:
+            query = query.filter(BulkComposerContent.social_account_id == social_account_id)
+        content = query.order_by(BulkComposerContent.scheduled_datetime.desc()).all()
         
         return {
             "success": True,
@@ -2474,12 +2513,13 @@ async def get_bulk_composer_content(
                     "has_media": bool(item.media_file),
                     "facebook_post_id": item.facebook_post_id,
                     "error_message": item.error_message,
-                    "created_at": item.created_at.isoformat() if item.created_at else None
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "schedule_batch_id": item.schedule_batch_id  # Include batch ID
                 }
                 for item in content
             ]
         }
-        
+    
     except Exception as e:
         logger.error(f"Error getting bulk composer content: {str(e)}")
         raise HTTPException(
@@ -2533,6 +2573,7 @@ async def schedule_bulk_composer_posts(
     """Schedule multiple posts for the bulk composer."""
     try:
         results = []
+        schedule_batch_id = str(uuid4())  # Unique batch ID for this scheduling action
         
         for post in request.posts:
             try:
@@ -2600,7 +2641,8 @@ async def schedule_bulk_composer_posts(
                     scheduled_date=post.scheduled_date,
                     scheduled_time=post.scheduled_time,
                     scheduled_datetime=scheduled_datetime,
-                    status=BulkComposerStatus.SCHEDULED.value
+                    status=BulkComposerStatus.SCHEDULED.value,
+                    schedule_batch_id=schedule_batch_id  # Assign batch ID
                 )
                 db.add(new_post)
                 db.commit()
@@ -2609,7 +2651,8 @@ async def schedule_bulk_composer_posts(
                 results.append({
                     "success": True, 
                     "id": new_post.id, 
-                    "caption": post.caption
+                    "caption": post.caption,
+                    "schedule_batch_id": schedule_batch_id
                 })
                 
             except Exception as e:

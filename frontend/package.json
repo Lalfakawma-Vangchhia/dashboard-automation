@@ -16,7 +16,7 @@
     "start-server": "npm run build && set HTTPS=true&& node server.js",
     "start-server-http": "npm run build && node server.js",
     "start-dev": "set HTTPS=true&& node server.js",
-    "build": "GENERATE_SOURCEMAP=false react-scripts build",
+    "build": "set GENERATE_SOURCEMAP=false && react-scripts build",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {

@@ -47,15 +47,9 @@ function FacebookPage() {
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
 
   const [showBulkComposer, setShowBulkComposer] = useState(false);
-  const [showAutomate, setShowAutomate] = useState(false);
   const [autoReplyMessagesEnabled, setAutoReplyMessagesEnabled] = useState(true); // Default ON
   const [autoReplyMessagesLoading, setAutoReplyMessagesLoading] = useState(false);
   const [autoReplyMessagesError, setAutoReplyMessagesError] = useState(null);
-
-  // Pagination states
-  const [schedulePage, setSchedulePage] = useState(1);
-  const [scheduleTotalPages, setScheduleTotalPages] = useState(1);
-  const [scheduleTotalCount, setScheduleTotalCount] = useState(0);
 
   // File picker modal states
   const [showFilePicker, setShowFilePicker] = useState(false);
@@ -63,17 +57,6 @@ function FacebookPage() {
   const [filePickerFormType, setFilePickerFormType] = useState(''); // 'auto' or 'manual'
   const [isLoadingGoogleDrive, setIsLoadingGoogleDrive] = useState(false);
   const [googleDriveAvailable, setGoogleDriveAvailable] = useState(false);
-
-  // Auto-reply states
-  const [autoReplySettings, setAutoReplySettings] = useState({
-    enabled: false,
-    template: 'Thank you for your comment! We appreciate your engagement. 😊',
-    isLoading: false,
-    showSettings: false,
-    selectedPostIds: [],
-    availablePosts: [],
-    isLoadingPosts: false
-  });
 
   // Add this state for scheduleData
   const [scheduleData, setScheduleData] = useState({
@@ -316,16 +299,17 @@ function FacebookPage() {
 
   const loadPostHistory = useCallback(async () => {
     if (!selectedPage) return;
-    
     try {
       setIsLoadingPosts(true);
-      const response = await apiClient.getSocialPosts('facebook');
-      const posts = response.slice(0, 10);
-      
-      // Separate posts by type - only auto and manual posts here
-      // Scheduled posts are handled separately in loadScheduledPosts()
-      setAutoPostHistory(posts.filter((_, index) => index % 2 === 0));
-      setManualPostHistory(posts.filter((_, index) => index % 2 === 1));
+      // Pass selectedPage.internalId to filter by page/account
+      const response = await apiClient.getSocialPosts('facebook', 50, selectedPage.internalId);
+      // Sort posts by created_at or next_execution descending (newest first)
+      const posts = response
+        .slice(0, 50)
+        .sort((a, b) => new Date(b.created_at || b.next_execution) - new Date(a.created_at || a.next_execution));
+      const topPosts = posts.slice(0, 10);
+      setAutoPostHistory(topPosts.filter((_, index) => index % 2 === 0));
+      setManualPostHistory(topPosts.filter((_, index) => index % 2 === 1));
       // Note: schedulePostHistory is now managed by loadScheduledPosts()
     } catch (error) {
       console.error('Error loading post history:', error);
@@ -340,78 +324,9 @@ function FacebookPage() {
       loadPostHistory();
       loadAutoReplySettings(); // Load auto-reply settings when page is selected
     }
-  }, [selectedPage, facebookConnected, activeTab, loadPostHistory]);
+  }, [selectedPage, facebookConnected, activeTab, loadPostHistory, loadAutoReplySettings]);
 
-  const loadScheduledPosts = async (page = 1) => {
-    if (!selectedPage) return;
-    
-    try {
-      // Load scheduled posts from backend
-      const scheduledPostsResponse = await apiClient.getPosts('facebook', 'scheduled');
-      console.log('📅 Loaded scheduled posts:', scheduledPostsResponse);
-      
-      // Filter scheduled posts for the current page
-      const pageScheduledPosts = scheduledPostsResponse.filter(post => {
-        // Match by social account ID or platform user ID
-        return post.social_account?.platform_user_id === selectedPage.id || 
-               post.social_account?.id === selectedPage.internalId;
-      });
-      
-      console.log('📅 Page scheduled posts:', pageScheduledPosts);
-      
-      // Calculate pagination
-      const postsPerPage = 10;
-      const totalCount = pageScheduledPosts.length;
-      const totalPages = Math.ceil(totalCount / postsPerPage);
-      const startIndex = (page - 1) * postsPerPage;
-      const endIndex = startIndex + postsPerPage;
-      
-      // Update pagination state
-      setScheduleTotalCount(totalCount);
-      setScheduleTotalPages(totalPages);
-      setSchedulePage(page);
-      
-      // Update schedule post history with pagination
-      setSchedulePostHistory(pageScheduledPosts.slice(startIndex, endIndex));
-      
-      // Check if there's an active schedule for this page
-      const activeSchedule = pageScheduledPosts.find(post => post.is_active);
-      
-      if (activeSchedule) {
-        // Update schedule data with the active schedule
-        setScheduleData(prev => ({
-          ...prev,
-          prompt: activeSchedule.prompt,
-          time: activeSchedule.post_time,
-          frequency: activeSchedule.frequency,
-          isActive: true,
-          scheduleId: activeSchedule.id,
-          customDate: activeSchedule.frequency === 'custom' ? activeSchedule.post_time : ''
-        }));
-        console.log('✅ Active schedule found and loaded:', activeSchedule);
-      } else {
-        // Only reset if we don't have a local active state that we're trying to maintain
-        setScheduleData(prev => {
-          // If we're in the middle of a toggle operation, don't override the state
-          if (prev.isActive && prev.scheduleId) {
-            console.log('🔄 Keeping local active state during operation');
-            return prev;
-          }
-          
-          return {
-            ...prev,
-            isActive: false,
-            scheduleId: null
-          };
-        });
-        console.log('❌ No active schedule found for this page');
-      }
-      
-    } catch (error) {
-      console.error('Error loading scheduled posts:', error);
-      // Keep current state on error
-    }
-  };
+
 
   const handleFacebookLogout = async () => {
     try {
@@ -472,90 +387,12 @@ function FacebookPage() {
     }
   };
 
-  const getCurrentPostHistory = () => {
-    switch (activeTab) {
-      case 'auto':
-        return autoPostHistory;
-      case 'manual':
-        return manualPostHistory;
-      default:
-        return autoPostHistory;
-    }
-  };
 
 
 
-  const handleAutoReplyToggle = async () => {
-    if (!selectedPage) {
-      setConnectionStatus('Please select a page first');
-      return;
-    }
 
-    // Check if posts are selected when enabling
-    if (!autoReplySettings.enabled && autoReplySettings.selectedPostIds.length === 0) {
-      setConnectionStatus('Please select at least one post to enable auto-reply');
-      return;
-    }
 
-    // Add mobile-friendly confirmation for enabling auto-reply
-    if (!autoReplySettings.enabled) {
-      const isMobile = window.innerWidth <= 768;
-      const confirmMessage = isMobile 
-        ? `Enable auto-reply for ${autoReplySettings.selectedPostIds.length} post(s)?`
-        : `Enable auto-reply for ${autoReplySettings.selectedPostIds.length} post(s)? AI will automatically reply to comments mentioning the commenter.`;
-      
-      if (!window.confirm(confirmMessage)) {
-        return;
-      }
-    }
 
-    try {
-      console.log('🔄 Toggling auto-reply for page:', selectedPage.id, selectedPage.name);
-      console.log('📝 Selected post IDs:', autoReplySettings.selectedPostIds);
-      console.log('🎯 New state will be:', !autoReplySettings.enabled);
-      
-      setAutoReplySettings(prev => ({ ...prev, isLoading: true }));
-      setConnectionStatus(autoReplySettings.enabled ? 'Disabling auto-reply...' : 'Enabling auto-reply...');
-
-      const response = await apiClient.toggleAutoReply(
-        selectedPage.id,
-        !autoReplySettings.enabled,
-        autoReplySettings.template || '', // Use empty string if no template
-        autoReplySettings.selectedPostIds
-      );
-
-      console.log('📡 Backend response:', response);
-
-      if (response.success) {
-        setAutoReplySettings(prev => ({
-          ...prev,
-          enabled: !prev.enabled,
-          isLoading: false,
-          ruleId: response.data?.rule_id || prev.ruleId // Store the rule ID
-        }));
-        
-        console.log('✅ Auto-reply toggled successfully:', {
-          enabled: !autoReplySettings.enabled,
-          ruleId: response.data?.rule_id,
-          selectedPostsCount: response.data?.selected_posts_count
-        });
-        
-        const successMessage = !autoReplySettings.enabled 
-          ? isMobile()
-            ? `Auto-reply enabled for ${response.data?.selected_posts_count || 0} post(s)!`
-            : `Auto-reply enabled successfully for ${response.data?.selected_posts_count || 0} post(s)! AI will automatically reply to comments mentioning the commenter.`
-          : 'Auto-reply disabled successfully.';
-        
-        setConnectionStatus(successMessage);
-      } else {
-        throw new Error(response.error || 'Failed to toggle auto-reply');
-      }
-    } catch (error) {
-      console.error('❌ Auto-reply toggle error:', error);
-      setConnectionStatus('Failed to update auto-reply: ' + (error.message || 'Unknown error'));
-      setAutoReplySettings(prev => ({ ...prev, isLoading: false }));
-    }
-  };
 
   const fetchPages = async (accessToken) => {
     if (!accessToken) {
@@ -1317,94 +1154,6 @@ function FacebookPage() {
     }
   };
 
-  const loadPostsForAutoReply = async () => {
-    if (!selectedPage) return;
-    
-    try {
-      setAutoReplySettings(prev => ({ ...prev, isLoadingPosts: true }));
-      console.log('🔄 Loading posts for auto-reply selection for page:', selectedPage.id);
-      
-      const response = await apiClient.getPostsForAutoReply(selectedPage.id);
-      console.log('📋 Posts for auto-reply:', response);
-      
-      if (response.success) {
-        setAutoReplySettings(prev => ({
-          ...prev,
-          availablePosts: response.posts,
-          isLoadingPosts: false
-        }));
-        console.log('✅ Posts loaded for auto-reply selection:', response.posts.length);
-        
-        // Show user-friendly message if no posts found
-        if (response.posts.length === 0) {
-          setConnectionStatus('No posts found for auto-reply. Create some posts first using the AI Generate or Manual Post tabs.');
-        }
-      } else {
-        throw new Error(response.error || 'Failed to load posts');
-      }
-    } catch (error) {
-      console.error('❌ Error loading posts for auto-reply:', error);
-      
-      // Provide more specific error messages
-      let errorMessage = 'Failed to load posts for auto-reply selection';
-      if (error.message.includes('404')) {
-        errorMessage = 'Facebook page not found. Please reconnect your Facebook account.';
-      } else if (error.message.includes('401')) {
-        errorMessage = 'Authentication failed. Please log in again.';
-      } else if (error.message.includes('500')) {
-        errorMessage = 'Server error. Please try again later.';
-      }
-      
-      setConnectionStatus(errorMessage);
-      setAutoReplySettings(prev => ({ ...prev, isLoadingPosts: false }));
-    }
-  };
-
-  const handlePostSelection = (postId) => {
-    setAutoReplySettings(prev => {
-      const isSelected = prev.selectedPostIds.includes(postId);
-      const newSelectedIds = isSelected 
-        ? prev.selectedPostIds.filter(id => id !== postId)
-        : [...prev.selectedPostIds, postId];
-      
-      return {
-        ...prev,
-        selectedPostIds: newSelectedIds
-      };
-    });
-  };
-
-  // Mobile-friendly touch handler for post selection
-  const handlePostTouch = (postId, event) => {
-    // Prevent double-tap zoom on mobile
-    event.preventDefault();
-    handlePostSelection(postId);
-  };
-
-  const selectAllPosts = () => {
-    setAutoReplySettings(prev => ({
-      ...prev,
-      selectedPostIds: prev.availablePosts.map(post => post.id)
-    }));
-  };
-
-  const deselectAllPosts = () => {
-    setAutoReplySettings(prev => ({
-      ...prev,
-      selectedPostIds: []
-    }));
-  };
-
-  const handleSettingsToggle = () => {
-    const newShowSettings = !autoReplySettings.showSettings;
-    setAutoReplySettings(prev => ({ ...prev, showSettings: newShowSettings }));
-    
-    // Load posts when opening settings
-    if (newShowSettings && autoReplySettings.availablePosts.length === 0) {
-      loadPostsForAutoReply();
-    }
-  };
-
   // Fetch AUTO_REPLY_MESSAGE rule for selected page
   const loadAutoReplyMessageRule = useCallback(async () => {
     if (!selectedPage) return;
@@ -1565,16 +1314,37 @@ function FacebookPage() {
               {/* Page Selection */}
               {availablePages.length > 1 && (
                 <div className="page-selector">
-                  <h3>Select a Page</h3>
+                  <h3 className="select-page-heading">Select a Page</h3>
                   <div className="pages-grid">
                     {availablePages.map((page) => (
                       <div
                         key={page.id}
                         className={`page-card ${selectedPage?.id === page.id ? 'selected' : ''}`}
                         onClick={() => {
-                          setSelectedPage(page);
-                          // Load auto-reply settings for the newly selected page
-                          setTimeout(() => loadAutoReplySettings(), 100);
+                          if (selectedPage?.id !== page.id) {
+                            setSelectedPage(page);
+                            setAutoPostHistory([]);
+                            setManualPostHistory([]);
+                            setShowBulkComposer(false);
+                            setActiveTab('auto');
+                            setConnectionStatus('');
+                            setScheduleData({
+                              prompt: '',
+                              time: '',
+                              frequency: 'daily',
+                              customDate: '',
+                              isActive: false,
+                              scheduleId: null
+                            });
+                            setAutoReplyMessagesEnabled(true);
+                            setAutoReplyMessagesLoading(false);
+                            setAutoReplyMessagesError(null);
+                            // Re-fetch data for the new page
+                            setTimeout(() => {
+                              loadAutoReplySettings();
+                              loadPostHistory();
+                            }, 100);
+                          }
                         }}
                       >
                         <div className="page-avatar">

@@ -30,6 +30,7 @@ class BulkComposerContent(Base):
     scheduled_date = Column(String(10), nullable=False)  # YYYY-MM-DD format
     scheduled_time = Column(String(5), nullable=False)  # HH:MM format
     scheduled_datetime = Column(DateTime(timezone=True), nullable=False)
+    schedule_batch_id = Column(String(64), nullable=True, index=True)  # Batch/group identifier for recurring schedules
     
     # Status and tracking
     status = Column(String(20), default=BulkComposerStatus.DRAFT.value)

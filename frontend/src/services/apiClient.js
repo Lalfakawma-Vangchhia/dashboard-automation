@@ -228,10 +228,11 @@ class ApiClient {
 
   // (No scheduled post methods here anymore)
 
-  async getSocialPosts(platform = null, limit = 50) {
+  async getSocialPosts(platform = null, limit = 50, socialAccountId = null) {
     const params = new URLSearchParams();
     if (platform) params.append('platform', platform);
     params.append('limit', limit.toString());
+    if (socialAccountId) params.append('social_account_id', socialAccountId);
     
     return this.request(`/api/social/posts?${params.toString()}`);
   }
@@ -245,18 +246,7 @@ class ApiClient {
     });
   }
 
-  // REPLACE Make.com auto-post webhook
-  async createFacebookPost(pageId, message, postType = 'post-auto', image = null) {
-    return this.request('/api/social/facebook/post', {
-      method: 'POST',
-      body: JSON.stringify({
-        page_id: pageId,
-        message: message,
-        post_type: postType,
-        image: image,
-      }),
-    });
-  }
+
 
   // Instagram post creation
   async createInstagramPost(data) {
@@ -791,12 +781,14 @@ class ApiClient {
   }
 
   // Bulk Composer - Get scheduled posts
-  async getBulkComposerContent() {
+  async getBulkComposerContent(socialAccountId = null) {
     try {
       console.log('Getting bulk composer content...');
-      
-      const response = await this.request('/api/social/bulk-composer/content');
-      
+      let endpoint = '/api/social/bulk-composer/content';
+      if (socialAccountId) {
+        endpoint += `?social_account_id=${socialAccountId}`;
+      }
+      const response = await this.request(endpoint);
       console.log('Bulk composer content response:', response);
       return response;
     } catch (error) {

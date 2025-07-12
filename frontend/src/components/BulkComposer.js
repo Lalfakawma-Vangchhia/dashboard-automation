@@ -3,6 +3,17 @@ import { useAuth } from '../contexts/AuthContext';
 import apiClient from '../services/apiClient';
 import { fileToBase64 } from './FacebookUtils';
 import './BulkComposer.css';
+import { MdAdd, MdSelectAll, MdDelete, MdExpandMore, MdSort } from 'react-icons/md';
+
+// 1. Add promptTemplates as a constant
+const promptTemplates = [
+  { id: 1, name: 'Daily Motivation', prompt: 'Share an inspiring quote or motivational message for your audience' },
+  { id: 2, name: 'Product Showcase', prompt: 'Highlight your best products with engaging descriptions' },
+  { id: 3, name: 'Behind the Scenes', prompt: 'Share behind-the-scenes content about your business or team' },
+  { id: 4, name: 'Customer Spotlight', prompt: 'Feature customer testimonials or success stories' },
+  { id: 5, name: 'Industry Tips', prompt: 'Share valuable tips and insights related to your industry' },
+  { id: 6, name: 'Custom', prompt: 'custom' }
+];
 
 function BulkComposer({ selectedPage, onClose }) {
 
@@ -22,13 +33,10 @@ function BulkComposer({ selectedPage, onClose }) {
   // Composer grid state
   const [composerRows, setComposerRows] = useState([]);
   const [selectedRows, setSelectedRows] = useState([]);
-  const [editingCell, setEditingCell] = useState(null);
   const [dragStartRow, setDragStartRow] = useState(null);
 
   // Calendar preview state
-  const [calendarView, setCalendarView] = useState('month');
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
 
   // Queue state
   const [isScheduling, setIsScheduling] = useState(false);
@@ -42,84 +50,38 @@ function BulkComposer({ selectedPage, onClose }) {
   const [scheduledPosts, setScheduledPosts] = useState([]);
   const [loadingScheduledPosts, setLoadingScheduledPosts] = useState(false);
   const [showScheduledPosts, setShowScheduledPosts] = useState(true);
-  const [expandedSchedules, setExpandedSchedules] = useState(new Set());
+  const [expandedSchedule, setExpandedSchedule] = useState(null);
   const [editingPost, setEditingPost] = useState(null);
 
-  // Group scheduled posts by date
-  const groupedSchedules = scheduledPosts.reduce((groups, post) => {
-    const dateKey = post.scheduled_date;
-    if (!groups[dateKey]) {
-      groups[dateKey] = [];
+  // 1. Add state for pagination and sorting:
+  const [schedulePage, setSchedulePage] = useState(1);
+  const [scheduleSort, setScheduleSort] = useState('desc'); // 'desc' for newest first, 'asc' for oldest first
+  const SCHEDULES_PER_PAGE = 5;
+
+  const initialAutoExpandDone = useRef(false);
+
+  // Group scheduled posts by schedule_batch_id (batch), fallback to date if missing
+  const groupedBatches = scheduledPosts.reduce((groups, post) => {
+    const batchKey = post.schedule_batch_id || post.scheduled_date;
+    if (!groups[batchKey]) {
+      groups[batchKey] = [];
     }
-    groups[dateKey].push(post);
+    groups[batchKey].push(post);
     return groups;
   }, {});
 
-  // Sort dates in ascending order
-  const sortedScheduleDates = Object.keys(groupedSchedules).sort();
-
-  // Prompt templates
-  const [promptTemplates, setPromptTemplates] = useState([
-    { id: 1, name: 'Daily Motivation', prompt: 'Share an inspiring quote or motivational message for your audience' },
-    { id: 2, name: 'Product Showcase', prompt: 'Highlight your best products with engaging descriptions' },
-    { id: 3, name: 'Behind the Scenes', prompt: 'Share behind-the-scenes content about your business or team' },
-    { id: 4, name: 'Customer Spotlight', prompt: 'Feature customer testimonials or success stories' },
-    { id: 5, name: 'Industry Tips', prompt: 'Share valuable tips and insights related to your industry' },
-    { id: 6, name: 'Custom', prompt: 'custom' }
-  ]);
+  // Sort batches by earliest scheduled_date in each batch
+  const sortedBatchKeys = Object.keys(groupedBatches).sort((a, b) => {
+    const aDate = groupedBatches[a][0]?.scheduled_date || a;
+    const bDate = groupedBatches[b][0]?.scheduled_date || b;
+    return scheduleSort === 'desc' ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate);
+  });
+  const totalPages = Math.ceil(scheduledPosts.length / SCHEDULES_PER_PAGE);
+  const pagedBatchKeys = sortedBatchKeys.slice((schedulePage - 1) * SCHEDULES_PER_PAGE, schedulePage * SCHEDULES_PER_PAGE);
 
   const gridRef = useRef(null);
 
-  // Initialize composer with default rows
-  useEffect(() => {
-    if (strategyData.startDate && strategyData.frequency) {
-      generateInitialRows();
-    }
-  }, [strategyData.startDate, strategyData.endDate, strategyData.frequency, strategyData.timeSlot]);
-
-  // Load scheduled posts
-  const loadScheduledPosts = async () => {
-    setLoadingScheduledPosts(true);
-    try {
-      const response = await apiClient.getBulkComposerContent();
-      if (response && response.data) {
-        setScheduledPosts(response.data);
-      }
-    } catch (error) {
-      console.error('Error loading scheduled posts:', error);
-      alert('Failed to load scheduled posts. Please try again.');
-    } finally {
-      setLoadingScheduledPosts(false);
-    }
-  };
-
-  // Load scheduled posts when component mounts or when page is selected
-  useEffect(() => {
-    if (selectedPage && selectedPage.internalId) {
-      loadScheduledPosts();
-    }
-  }, [selectedPage?.internalId]);
-
-  // Auto-expand today's schedule and recent schedules
-  useEffect(() => {
-    if (scheduledPosts.length > 0) {
-      const today = new Date().toISOString().split('T')[0];
-      const recentDates = sortedScheduleDates.slice(0, 3); // Show first 3 dates
-      const autoExpandDates = new Set();
-      
-      // Always expand today if it exists
-      if (groupedSchedules[today]) {
-        autoExpandDates.add(today);
-      }
-      
-      // Expand first few dates
-      recentDates.forEach(date => autoExpandDates.add(date));
-      
-      setExpandedSchedules(autoExpandDates);
-    }
-  }, [scheduledPosts, sortedScheduleDates]);
-
-
+  // Define generateInitialRows before it's used in useEffect
   const generateInitialRows = useCallback(() => {
     if (!strategyData.startDate) return;
     
@@ -218,6 +180,68 @@ function BulkComposer({ selectedPage, onClose }) {
 
     setComposerRows(rows);
   }, [strategyData.startDate, strategyData.endDate, strategyData.frequency, strategyData.timeSlot]);
+
+  // Initialize composer with default rows
+  useEffect(() => {
+    if (strategyData.startDate && strategyData.frequency) {
+      generateInitialRows();
+    }
+  }, [strategyData.startDate, strategyData.endDate, strategyData.frequency, strategyData.timeSlot, generateInitialRows]);
+
+  // Load scheduled posts
+  const loadScheduledPosts = useCallback(async () => {
+    setLoadingScheduledPosts(true);
+    try {
+      const response = await apiClient.getBulkComposerContent(selectedPage?.internalId);
+      if (response && response.data) {
+        setScheduledPosts(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading scheduled posts:', error);
+      alert('Failed to load scheduled posts. Please try again.');
+    } finally {
+      setLoadingScheduledPosts(false);
+    }
+  }, [selectedPage?.internalId]);
+
+  // Load scheduled posts when component mounts or when page is selected
+  useEffect(() => {
+    if (selectedPage && selectedPage.internalId) {
+      loadScheduledPosts();
+    }
+  }, [selectedPage?.internalId, loadScheduledPosts, selectedPage]);
+
+  // After fetching scheduledPosts, add a debug log
+  useEffect(() => {
+    if (!loadingScheduledPosts && scheduledPosts.length > 0) {
+      console.log('[BulkComposer] Raw scheduledPosts:', scheduledPosts);
+    }
+  }, [loadingScheduledPosts, scheduledPosts]);
+
+  // After grouping batches, add a debug log
+  useEffect(() => {
+    console.log('[BulkComposer] Grouped batch keys:', sortedBatchKeys);
+    console.log('[BulkComposer] Grouped batches:', groupedBatches);
+  }, [sortedBatchKeys, groupedBatches]);
+
+  // Auto-expand today's schedule and recent schedules
+  useEffect(() => {
+    if (scheduledPosts.length > 0 && !initialAutoExpandDone.current) {
+      const today = new Date().toISOString().split('T')[0];
+      const recentDates = sortedBatchKeys.slice(0, 3);
+      if (groupedBatches[today]) {
+        setExpandedSchedule(today);
+      } else if (recentDates.length > 0) {
+        setExpandedSchedule(recentDates[0]);
+      } else {
+        setExpandedSchedule(null);
+      }
+      initialAutoExpandDone.current = true;
+    }
+  }, [scheduledPosts.length, sortedBatchKeys, groupedBatches]);
+
+  // Add this useEffect after the pagination logic:
+  useEffect(() => { setSchedulePage(1); }, [scheduleSort, totalPages]);
 
   const handleStrategyChange = useCallback((field, value) => {
     setStrategyData(prev => {
@@ -579,45 +603,12 @@ function BulkComposer({ selectedPage, onClose }) {
     }
   };
 
-  const handleDuplicateRow = (rowId) => {
-    const rowToDuplicate = composerRows.find(row => row.id === rowId);
-    if (rowToDuplicate) {
-      const newRow = {
-        ...rowToDuplicate,
-        id: `row-${Date.now()}-${Math.random()}`,
-        scheduledDate: new Date(rowToDuplicate.scheduledDate).toISOString().split('T')[0]
-      };
-      setComposerRows(prev => [...prev, newRow]);
-    }
-  };
-
-  const handleDeleteRow = (rowId) => {
-    setComposerRows(prev => prev.filter(row => row.id !== rowId));
-    setSelectedRows(prev => prev.filter(id => id !== rowId));
-  };
-
   const handleBulkDelete = () => {
     setComposerRows(prev => prev.filter(row => !selectedRows.includes(row.id)));
     setSelectedRows([]);
   };
 
-  const handleTimeShift = (direction) => {
-    setComposerRows(prev => 
-      prev.map(row => {
-        if (selectedRows.includes(row.id)) {
-          const [hours, minutes] = row.scheduledTime.split(':');
-          let newHours = parseInt(hours) + (direction === 'forward' ? 1 : -1);
-          if (newHours < 0) newHours = 23;
-          if (newHours > 23) newHours = 0;
-          return {
-            ...row,
-            scheduledTime: `${newHours.toString().padStart(2, '0')}:${minutes}`
-          };
-        }
-        return row;
-      })
-    );
-  };
+
 
   const handleDragStart = (rowId) => {
     setDragStartRow(rowId);
@@ -933,15 +924,6 @@ function BulkComposer({ selectedPage, onClose }) {
     return days;
   };
 
-  const handleCalendarDateSelect = (date) => {
-    setSelectedCalendarDate(date);
-    // Auto-populate Step 2 with the selected date
-    setStrategyData(prev => ({
-      ...prev,
-      startDate: date.toISOString().split('T')[0]
-    }));
-  };
-
   const getPostsForDate = (date) => {
     // Format date consistently to avoid timezone issues
     const dateString = date.getFullYear() + '-' + 
@@ -1010,14 +992,11 @@ function BulkComposer({ selectedPage, onClose }) {
 
   // Handle schedule expansion
   const toggleScheduleExpansion = (dateKey) => {
-    setExpandedSchedules(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(dateKey)) {
-        newSet.delete(dateKey);
-      } else {
-        newSet.add(dateKey);
+    setExpandedSchedule(prev => {
+      if (prev === dateKey) {
+        return null;
       }
-      return newSet;
+      return dateKey;
     });
   };
 
@@ -1077,23 +1056,33 @@ function BulkComposer({ selectedPage, onClose }) {
   };
 
   return (
-    <div className="bulk-composer">
-      {/* Only keep the header and content, no card or extra wrapper */}
+    <div className="bulk-composer-panel">
       <div className="bulk-composer-header">
-        <h2>Bulk Composer</h2>
+        <div className="header-content">
+          <h2>Bulk Composer</h2>
+          <p className="header-subtitle">Create and schedule multiple social media posts efficiently</p>
+        </div>
         {!isAuthenticated && (
           <div className="auth-warning">
-            <span style={{ color: '#ff6b6b', fontSize: '14px' }}>
-              ⚠️ Please log in to schedule posts
-            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span>Please log in to schedule posts</span>
           </div>
         )}
       </div>
-      <div className="bulk-composer-content">
+      <div className="bulk-composer-scrollable-content">
         {/* Strategy and Calendar Combined */}
         <div className="strategy-calendar-section">
           <div className="strategy-step">
-            <h3>Step 1: Strategy & Schedule</h3>
+            <h3>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+              Step 1: Strategy & Schedule
+            </h3>
             <div className="strategy-form">
               <div className="form-group">
                 <label>Strategy Template</label>
@@ -1168,20 +1157,7 @@ function BulkComposer({ selectedPage, onClose }) {
                   </small>
                 </div>
 
-                <div className="form-group">
-                  <label>Frequency</label>
-                  <select
-                    value={strategyData.frequency}
-                    onChange={(e) => handleStrategyChange('frequency', e.target.value)}
-                    className="form-select"
-                  >
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="custom">Custom Cron</option>
-                  </select>
-                </div>
-
+                {/* Time Slot should be just below End Date */}
                 <div className="form-group">
                   <label>Time Slot</label>
                   <input
@@ -1210,7 +1186,15 @@ function BulkComposer({ selectedPage, onClose }) {
 
           {/* Calendar Preview */}
           <div className="calendar-preview-section">
-            <h3>Calendar Preview</h3>
+            <h3>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              Calendar Preview
+            </h3>
             <div className="calendar-container">
               <div className="calendar-header">
                 <button
@@ -1256,13 +1240,49 @@ function BulkComposer({ selectedPage, onClose }) {
                 ))}
               </div>
             </div>
+            {/* Frequency moved here for cleaner UI */}
+            <div className="form-row calendar-options-row">
+              <div className="form-group">
+                <label>Frequency</label>
+                <select
+                  value={strategyData.frequency}
+                  onChange={(e) => handleStrategyChange('frequency', e.target.value)}
+                  className="form-select"
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="custom">Custom Cron</option>
+                </select>
+              </div>
+            </div>
+            {strategyData.frequency === 'custom' && (
+              <div className="form-group">
+                <label>Custom Cron Expression</label>
+                <input
+                  type="text"
+                  value={strategyData.customCron}
+                  onChange={(e) => handleStrategyChange('customCron', e.target.value)}
+                  placeholder="0 9 * * * (daily at 9 AM)"
+                  className="form-input"
+                />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Composer Grid */}
         <div className="composer-grid-section">
           <div className="composer-header">
-            <h3>Step 2: Content Grid</h3>
+            <h3>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="9" y1="9" x2="9" y2="15"/>
+                <line x1="15" y1="9" x2="15" y2="15"/>
+                <line x1="9" y1="12" x2="15" y2="12"/>
+              </svg>
+              Step 2: Content Grid
+            </h3>
             <div className="composer-controls">
               <button
                 onClick={() => {
@@ -1280,28 +1300,20 @@ function BulkComposer({ selectedPage, onClose }) {
                 }}
                 className="btn btn-primary btn-small"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19"/>
-                  <line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
-                Add Row
+                <MdAdd size={16} />
               </button>
               <button
                 onClick={handleSelectAll}
                 className="btn btn-secondary btn-small"
               >
-                {selectedRows.length === composerRows.length ? 'Deselect All' : 'Select All'}
+                {selectedRows.length === composerRows.length ? <MdSelectAll size={16} /> : <MdSelectAll size={16} />}
               </button>
               <button
                 onClick={handleBulkDelete}
                 disabled={selectedRows.length === 0}
                 className="btn btn-danger btn-small"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3,6 5,6 21,6"/>
-                  <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/>
-                </svg>
-                Delete Selected
+                <MdDelete size={16} />
               </button>
               <button 
                 className="btn btn-primary" 
@@ -1324,11 +1336,45 @@ function BulkComposer({ selectedPage, onClose }) {
             <div className="composer-grid" ref={gridRef}>
               <div className="grid-header grid-row">
                 <div className="grid-cell header-cell"></div>
-                <div className="grid-cell header-cell">Caption</div>
-                <div className="grid-cell header-cell">Media</div>
-                <div className="grid-cell header-cell">Date</div>
-                <div className="grid-cell header-cell">Time</div>
-                <div className="grid-cell header-cell">Status</div>
+                <div className="grid-cell header-cell" title="Caption">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="9" y1="9" x2="15" y2="9"/>
+                    <line x1="9" y1="15" x2="15" y2="15"/>
+                  </svg>
+                  <span className="header-label">Caption</span>
+                </div>
+                <div className="grid-cell header-cell" title="Media">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21,15 16,10 5,21"/>
+                  </svg>
+                  <span className="header-label">Media</span>
+                </div>
+                <div className="grid-cell header-cell" title="Date">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                  <span className="header-label">Date</span>
+                </div>
+                <div className="grid-cell header-cell" title="Time">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12,6 12,12 16,14"/>
+                  </svg>
+                  <span className="header-label">Time</span>
+                </div>
+                <div className="grid-cell header-cell" title="Status">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M9 12l2 2 4-4"/>
+                  </svg>
+                  <span className="header-label">Status</span>
+                </div>
               </div>
 
               <div className="grid-body">
@@ -1364,12 +1410,7 @@ function BulkComposer({ selectedPage, onClose }) {
                           className="expand-btn"
                           title="Expand caption"
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M15 3h6v6"/>
-                            <path d="M9 21H3v-6"/>
-                            <path d="M21 3l-7 7"/>
-                            <path d="M3 21l7-7"/>
-                          </svg>
+                          <MdExpandMore size={16} />
                         </button>
                       </div>
                     </div>
@@ -1487,7 +1528,13 @@ function BulkComposer({ selectedPage, onClose }) {
 
         {/* Queue Confirmation */}
         <div className="queue-confirmation">
-          <h3>Step 3: Schedule & Publish</h3>
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12,6 12,12 16,14"/>
+            </svg>
+            Step 3: Schedule & Publish
+          </h3>
           <div className="confirmation-stats">
             <div className="stat-item">
               <span className="stat-label">Total Posts:</span>
@@ -1557,7 +1604,16 @@ function BulkComposer({ selectedPage, onClose }) {
         {/* Scheduled Posts View */}
         <div className="scheduled-posts-section">
           <div className="scheduled-posts-header">
-            <h3>Scheduled Posts</h3>
+            <h3>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14,2 14,8 20,8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10,9 9,9 8,9"/>
+              </svg>
+              Scheduled Posts
+            </h3>
             <div className="scheduled-posts-controls">
               <button
                 onClick={() => setShowScheduledPosts(!showScheduledPosts)}
@@ -1594,184 +1650,166 @@ function BulkComposer({ selectedPage, onClose }) {
                   </svg>
                   Loading scheduled posts...
                 </div>
-              ) : sortedScheduleDates.length > 0 ? (
+              ) : pagedBatchKeys.length > 0 ? (
                 <div className="scheduled-posts-list">
-                  {sortedScheduleDates.map(dateKey => (
-                    <div key={dateKey} className="scheduled-post-group">
-                      <div 
-                        className="schedule-group-header"
-                        onClick={() => toggleScheduleExpansion(dateKey)}
-                      >
-                        <div className="schedule-info">
-                          <h4 className="schedule-date">
-                            {new Date(dateKey).toLocaleDateString('en-US', { 
-                              weekday: 'long',
-                              month: 'long', 
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          </h4>
-                          <div className="schedule-stats">
-                            <span className="post-count">{groupedSchedules[dateKey].length} post{groupedSchedules[dateKey].length !== 1 ? 's' : ''}</span>
-                            <span className="status-breakdown">
-                              {(() => {
-                                const statuses = groupedSchedules[dateKey].reduce((acc, post) => {
-                                  acc[post.status] = (acc[post.status] || 0) + 1;
-                                  return acc;
-                                }, {});
-                                return Object.entries(statuses).map(([status, count]) => (
-                                  <span key={status} className={`status-chip ${status.toLowerCase()}`}>
-                                    {count} {status}
-                                  </span>
-                                ));
-                              })()}
-                            </span>
+                  {pagedBatchKeys.length > 0 && (
+                    <div className="schedule-pagination-controls">
+                      <button onClick={() => setSchedulePage(p => Math.max(1, p - 1))} disabled={schedulePage === 1}>Prev</button>
+                      <span>Page {schedulePage} of {totalPages}</span>
+                      <button onClick={() => setSchedulePage(p => Math.min(totalPages, p + 1))} disabled={schedulePage === totalPages}>Next</button>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <MdSort size={20} />
+                        <select value={scheduleSort} onChange={e => { setScheduleSort(e.target.value); }}>
+                          <option value="desc">Newest First</option>
+                          <option value="asc">Oldest First</option>
+                        </select>
+                      </span>
+                    </div>
+                  )}
+                  {pagedBatchKeys.map((batchKey, idx) => {
+                    const batchPosts = groupedBatches[batchKey];
+                    const isExpanded = expandedSchedule === batchKey;
+                    // Get date range for summary
+                    const dates = batchPosts.map(p => p.scheduled_date).sort();
+                    const dateRange = dates.length > 1 ? `${dates[0]} - ${dates[dates.length - 1]}` : dates[0];
+                    return (
+                      <div key={batchKey} className={`scheduled-post-group${isExpanded ? ' expanded' : ''}`}>
+                        <div className="schedule-group-header">
+                          <div className="schedule-info">
+                            <h4 className="schedule-date">
+                              {dateRange}
+                            </h4>
+                            <div className="schedule-stats">
+                              <span className="post-count">{batchPosts.length} scheduled</span>
+                              <span className="status-breakdown">
+                                {(() => {
+                                  const statuses = batchPosts.reduce((acc, post) => {
+                                    acc[post.status] = (acc[post.status] || 0) + 1;
+                                    return acc;
+                                  }, {});
+                                  return Object.entries(statuses).map(([status, count]) => (
+                                    <span key={status} className={`status-chip ${status.toLowerCase()}`}>{count} {status}</span>
+                                  ));
+                                })()}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="expand-controls">
+                            <button
+                              onClick={() => toggleScheduleExpansion(batchKey)}
+                              className={`expand-btn${isExpanded ? ' expanded' : ''}`}
+                              title={isExpanded ? 'Collapse' : 'Expand'}
+                            >
+                              <MdExpandMore size={16} />
+                            </button>
                           </div>
                         </div>
-                        <div className="expand-controls">
-                          <button
-                            className={`expand-btn ${expandedSchedules.has(dateKey) ? 'expanded' : ''}`}
-                            title={expandedSchedules.has(dateKey) ? 'Collapse' : 'Expand'}
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="6,9 12,15 18,9"/>
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                      
-                      {expandedSchedules.has(dateKey) && (
-                        <div className="schedule-content-grid">
-                          <div className="content-grid-header">
-                            <div className="grid-header-cell">Status</div>
-                            <div className="grid-header-cell">Caption</div>
-                            <div className="grid-header-cell">Time</div>
-                            <div className="grid-header-cell">Media</div>
-                            <div className="grid-header-cell">Actions</div>
-                          </div>
-                          
-                          {groupedSchedules[dateKey]
-                            .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
-                            .map((post) => (
-                            <div key={post.id} className="content-grid-row">
-                              <div className="grid-cell status-cell">
-                                <span className={`post-status-badge ${post.status.toLowerCase()}`}>
-                                  {getStatusIcon(post.status)} {post.status}
-                                </span>
-                              </div>
-                              
-                              <div className="grid-cell caption-cell">
-                                {editingPost && editingPost.id === post.id ? (
-                                  <textarea
-                                    value={editingPost.caption}
-                                    onChange={(e) => setEditingPost(prev => ({ ...prev, caption: e.target.value }))}
-                                    className="inline-caption-editor"
-                                    rows="4"
-                                    placeholder="Enter your caption..."
-                                  />
-                                ) : (
-                                  <div className="caption-preview" onClick={() => startEditingPost(post)}>
-                                    {post.caption.length > 100 
-                                      ? `${post.caption.substring(0, 100)}...` 
-                                      : post.caption
-                                    }
+                        {isExpanded && (
+                          <div className="schedule-content-grid">
+                            <div className="content-grid-header">
+                              <div className="grid-header-cell">Status</div>
+                              <div className="grid-header-cell">Caption</div>
+                              <div className="grid-header-cell">Time</div>
+                              <div className="grid-header-cell">Media</div>
+                              <div className="grid-header-cell">Actions</div>
+                            </div>
+                            {batchPosts
+                              .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
+                              .map((post) => (
+                                <div key={post.id} className="content-grid-row">
+                                  <div className="grid-cell status-cell">
+                                    <span className={`post-status-badge ${post.status.toLowerCase()}`}>{getStatusIcon(post.status)} {post.status}</span>
                                   </div>
-                                )}
-                              </div>
-                              
-                              <div className="grid-cell time-cell">
-                                <span className="schedule-time">{post.scheduled_time}</span>
-                              </div>
-                              
-                              <div className="grid-cell media-cell">
-                                {post.media_filename ? (
-                                  <div className="media-indicator">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                      <circle cx="8.5" cy="8.5" r="1.5"/>
-                                      <polyline points="21,15 16,10 5,21"/>
-                                    </svg>
-                                    {post.media_filename}
+                                  <div className="grid-cell caption-cell">
+                                    {editingPost && editingPost.id === post.id ? (
+                                      <textarea
+                                        value={editingPost.caption}
+                                        onChange={(e) => setEditingPost(prev => ({ ...prev, caption: e.target.value }))}
+                                        className="inline-caption-editor"
+                                        rows="4"
+                                        placeholder="Enter your caption..."
+                                      />
+                                    ) : (
+                                      <div className="caption-preview" onClick={() => startEditingPost(post)}>
+                                        {post.caption.length > 100 ? `${post.caption.substring(0, 100)}...` : post.caption}
+                                      </div>
+                                    )}
                                   </div>
-                                ) : (
-                                  <span className="no-media">Text only</span>
-                                )}
-                              </div>
-                              
-                              <div className="grid-cell actions-cell">
-                                {editingPost && editingPost.id === post.id ? (
-                                  <div className="edit-actions">
-                                    <button
-                                      onClick={savePostEdit}
-                                      className="btn btn-success btn-small"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                                        <polyline points="17,21 17,13 7,13 7,21"/>
-                                        <polyline points="7,3 7,8 15,8"/>
-                                      </svg>
-                                      Save
-                                    </button>
-                                    <button
-                                      onClick={cancelPostEdit}
-                                      className="btn btn-secondary btn-small"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <line x1="18" y1="6" x2="6" y2="18"/>
-                                        <line x1="6" y1="6" x2="18" y2="18"/>
-                                      </svg>
-                                      Cancel
-                                    </button>
+                                  <div className="grid-cell time-cell">
+                                    <span className="schedule-time">{post.scheduled_time}</span>
                                   </div>
-                                ) : (
-                                  <div className="post-actions">
-                                    <button
-                                      onClick={() => startEditingPost(post)}
-                                      className="btn btn-primary btn-small"
-                                      title="Edit caption"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                        <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                      </svg>
-                                      Edit
-                                    </button>
-                                    {post.status === 'scheduled' && (
-                                      <button
-                                        onClick={() => cancelScheduledPost(post.id, post.caption)}
-                                        className="btn btn-danger btn-small"
-                                        title="Cancel scheduled post"
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <div className="grid-cell media-cell">
+                                    {post.media_filename ? (
+                                      <div className="media-indicator">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                          <circle cx="8.5" cy="8.5" r="1.5"/>
+                                          <polyline points="21,15 16,10 5,21"/>
+                                        </svg>
+                                        {post.media_filename}
+                                      </div>
+                                    ) : (
+                                      <span className="no-media">Text only</span>
+                                    )}
+                                  </div>
+                                  <div className="grid-cell actions-cell">
+                                    {editingPost && editingPost.id === post.id ? (
+                                      <div className="edit-actions">
+                                        <button onClick={savePostEdit} className="btn btn-success btn-small">
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                                            <polyline points="17,21 17,13 7,13 7,21"/>
+                                            <polyline points="7,3 7,8 15,8"/>
+                                          </svg>
+                                          <span>Save</span>
+                                        </button>
+                                        <button onClick={cancelPostEdit} className="btn btn-secondary btn-small">
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <line x1="18" y1="6" x2="6" y2="18"/>
+                                            <line x1="6" y1="6" x2="18" y2="18"/>
+                                          </svg>
+                                          <span>Cancel</span>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="post-actions">
+                                        <button onClick={() => startEditingPost(post)} className="btn btn-primary btn-small" title="Edit caption">
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                            <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                          </svg>
+                                        </button>
+                                        {post.status === 'scheduled' && (
+                                          <button onClick={() => cancelScheduledPost(post.id, post.caption)} className="btn btn-danger btn-small" title="Cancel scheduled post">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                              <circle cx="12" cy="12" r="10"/>
+                                              <line x1="15" y1="9" x2="9" y2="15"/>
+                                              <line x1="9" y1="9" x2="15" y2="15"/>
+                                            </svg>
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {post.error_message && (
+                                    <div className="grid-cell error-cell full-width">
+                                      <div className="error-message">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                           <circle cx="12" cy="12" r="10"/>
                                           <line x1="15" y1="9" x2="9" y2="15"/>
                                           <line x1="9" y1="9" x2="15" y2="15"/>
                                         </svg>
-                                        Cancel
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              
-                              {post.error_message && (
-                                <div className="grid-cell error-cell full-width">
-                                  <div className="error-message">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <circle cx="12" cy="12" r="10"/>
-                                      <line x1="15" y1="9" x2="9" y2="15"/>
-                                      <line x1="9" y1="9" x2="15" y2="15"/>
-                                    </svg>
-                                    {post.error_message}
-                                  </div>
+                                        {post.error_message}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="no-scheduled-posts">
