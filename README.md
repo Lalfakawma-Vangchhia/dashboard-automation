@@ -1,24 +1,28 @@
 # Automation Dashboard
 
-A comprehensive social media automation platform with AI-powered content generation and auto-reply capabilities.
+A comprehensive social media automation platform with AI-powered content generation, auto-reply comments and Post Schduling.
 
 ---
 
 ## Features
 
 ### AI Auto-Reply System
-The platform now includes an intelligent auto-reply system that allows you to:
+The platform includes an intelligent auto-reply system that allows you to:
 
 1. **Select Specific Posts**: Choose which posts from your app should have auto-reply enabled
 2. **AI-Powered Responses**: Uses Groq AI to generate contextual, natural responses to comments
 3. **Custom Templates**: Optionally provide a response template to guide the AI
 4. **Instant Activation**: Enable/disable auto-reply for selected posts instantly
 
+OR 
+
+**The auto reply will be turn on automatically once the content is generated and this can be turn off from the settings**
+
 #### How to Use AI Auto-Reply:
 
 1. **Connect Facebook**: First, connect your Facebook account and select a page
 2. **Create Posts**: Make some posts using the AI Generate or Manual Post features
-3. **Configure Auto-Reply**:
+3. **Configure Auto-Reply** or **You can keep turn on for ever post**:          
    - Click the "Settings" button in the AI Auto-Reply section
    - Select the posts you want to enable auto-reply for (use "Select All" or choose individually)
    - Optionally add a custom response template
@@ -34,7 +38,7 @@ The platform now includes an intelligent auto-reply system that allows you to:
 - **Backend**: Uses FastAPI with SQLAlchemy for data persistence
 - **AI Service**: Integrates with Groq API for natural language generation
 - **Facebook Integration**: Direct API integration for posting replies
-- **Database**: Stores automation rules and post selections in PostgreSQL
+- **Database**: Stores automation rules and post selections in PostgreSQL, this can be monitor with pgAdmin.
 
 ### Other Features
 
@@ -86,7 +90,7 @@ $ cd frontend && npm start
 
 ### .env file
 
-A **.env** file is **NOT** committed to git; you must create it locally and share it securely with teammates.  
+A **.env** file is **NOT** committed to git; you can add the variables in **.env** file.  
 The application root expects the file `./.env` (same folder as this README).
 
 ```dotenv
@@ -95,7 +99,12 @@ ENVIRONMENT=development
 DEBUG=True
 
 # === Database ===
-DATABASE_URL=sqlite:///./automation_dashboard.db  # dev uses SQLite; override in prod
+DATABASE_URL=postgresql://postgres:<password>@localhost:5433/
+DB_HOST=localhost
+DB_PORT=5433
+DB_NAME=auto_dash
+DB_USER=postgres
+DB_PASSWORD=<password>
 
 # === JWT ===
 SECRET_KEY=change-me-please
@@ -110,9 +119,25 @@ INSTAGRAM_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # === Groq ===
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
+STABILITY_API_KEY=sk-kn2PmBtRQ6hsHOuuUatdQHrwD27JIZYgeTUjRI2orxM1PM8b
 
-> 🔒  **Never commit real secrets to git.**  `.env` is listed in `.gitignore` by default.
+
+# Google Drive 
+GOOGLE_DRIVE_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX.apps.googleusercontent.com
+GOOGLE_DRIVE_CLIENT_SECRET=GOCSPX-XXXXXXXXXXXXXXXXXXXX
+GOOGLE_DRIVE_REDIRECT_URI=http://localhost:8000/api/google-drive/oauth2callback
+GOOGLE_DRIVE_ACCESS_TOKEN=ya29.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GOOGLE_DRIVE_REFRESH_TOKEN=1//XXXXXXXXXX-XXXXXXXXXXX
+
+# Image Conversion
+IMGBB_API_KEY=74c3c2177d6a6083fc36e02e95081ffb
+
+CLOUDINARY_CLOUD_NAME=XXXXXXXXXXX
+CLOUDINARY_UPLOAD_PRESET=automation
+CLOUDINARY_API_SECRET=XXXXXXXXXXXXXXXXX
+CLOUDINARY_API_KEY=XXXXXXXXXXX
+
+```
 
 ---
 
@@ -171,7 +196,7 @@ Facebook & Instagram will refuse login with the error **"Feature Unavailable: Fa
 Pull requests are welcome! Please open an issue first to discuss changes you wish to make.
 
 ## License
-MIT © 2024 Your Name 
+ThorSignia © 2025
 
 
 "# auto-dashboard" 
