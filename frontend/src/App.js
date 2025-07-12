@@ -10,8 +10,6 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const SocialMediaPage = lazy(() => import('./components/SocialMediaPage'));
 const FacebookPage = lazy(() => import('./components/FacebookPage'));
 const InstagramPage = lazy(() => import('./components/InstagramPage'));
-const EmailPage = lazy(() => import('./components/EmailPage'));
-const AdsPage = lazy(() => import('./components/AdsPage'));
 
 // Loading component
 const LoadingSpinner = () => (
@@ -118,16 +116,7 @@ function AppContent() {
                 <InstagramPage />
               </Suspense>
             } />
-            <Route path="/email" element={
-              <Suspense fallback={<LoadingSpinner />}>
-                <EmailPage />
-              </Suspense>
-            } />
-            <Route path="/ads" element={
-              <Suspense fallback={<LoadingSpinner />}>
-                <AdsPage />
-              </Suspense>
-            } />
+
           </>
         ) : (
           <Route path="*" element={<Login />} />

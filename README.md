@@ -142,6 +142,8 @@ Facebook & Instagram will refuse login with the error **"Feature Unavailable: Fa
 |----------------------------------|-------------------------------|
 | `uvicorn backend.app.main:app --reload` | Start FastAPI (hot-reload) |
 | `alembic revision --autogenerate` | Create DB migration           |
+| `alembic upgrade head` | Apply all pending migrations    |
+| `python setup_database.py` | Setup database with Alembic    |
 | `npm start` (inside `frontend/`)  | React dev server              |
 
 ---
@@ -161,7 +163,7 @@ Facebook & Instagram will refuse login with the error **"Feature Unavailable: Fa
 |-------------------------------------------|--------------------------------------------------------------|
 | *Feature Unavailable* in Facebook OAuth   | Add the account as **Tester** in FB Developer portal, accept invite, check redirect URIs. |
 | 401 / "Not authenticated" errors          | Verify `SECRET_KEY` matches in back-end & front-end env vars. |
-| DB errors with Postgres                   | Update `DATABASE_URL` and run `alembic upgrade head`.        |
+| DB errors with Postgres                   | Update `DATABASE_URL` and run `python setup_database.py`.    |
 
 ---
 

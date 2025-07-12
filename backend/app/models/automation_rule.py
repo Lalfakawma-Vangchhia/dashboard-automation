@@ -12,15 +12,15 @@ class RuleType(str, enum.Enum):
     AUTO_FOLLOW = "auto_follow"
     AUTO_LIKE = "auto_like"
     AUTO_COMMENT = "auto_comment"
-
+    AUTO_REPLY_MESSAGE = "AUTO_REPLY_MESSAGE"  # For Facebook message auto-reply
 
 class TriggerType(str, enum.Enum):
-    KEYWORD = "keyword"
-    MENTION = "mention"
-    HASHTAG = "hashtag"
-    TIME_BASED = "time_based"
-    ENGAGEMENT_BASED = "engagement_based"
-    FOLLOWER_BASED = "follower_based"
+    KEYWORD = "KEYWORD"
+    MENTION = "MENTION"
+    HASHTAG = "HASHTAG"
+    TIME_BASED = "TIME_BASED"
+    ENGAGEMENT_BASED = "ENGAGEMENT_BASED"
+    FOLLOWER_BASED = "FOLLOWER_BASED"
 
 
 class AutomationRule(Base):

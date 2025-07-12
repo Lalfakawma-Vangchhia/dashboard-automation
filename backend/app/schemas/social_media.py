@@ -20,6 +20,7 @@ class SocialAccountCreate(SocialAccountBase):
 
 class SocialAccountResponse(SocialAccountBase):
     id: int
+    user_id: int
     platform_user_id: str
     profile_picture_url: Optional[str] = None
     follower_count: int

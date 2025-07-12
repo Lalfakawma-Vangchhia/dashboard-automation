@@ -1,9 +1,10 @@
 /* eslint-disable no-undef */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import apiClient from '../services/apiClient';
-import { fileToBase64, MediaIcon, cleanupFacebookSDK, loadFacebookSDK } from './FacebookUtils';
+import { fileToBase64, loadFacebookSDK } from './FacebookUtils';
+import BulkComposer from './BulkComposer';
 import './FacebookPage.css';
 
 function FacebookPage() {
@@ -17,8 +18,6 @@ function FacebookPage() {
   const [availablePages, setAvailablePages] = useState([]);
   const [facebookConnected, setFacebookConnected] = useState(false);
   const [activeTab, setActiveTab] = useState('auto');
-  const [cardFlipped, setCardFlipped] = useState(false);
-  const [existingConnections, setExistingConnections] = useState(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   
@@ -35,15 +34,6 @@ function FacebookPage() {
     isGeneratingImage: false
   });
   
-  const [scheduleData, setScheduleData] = useState({
-    prompt: '',
-    time: '',
-    frequency: 'daily',
-    customDate: '',
-    isActive: false,
-    scheduleId: null
-  });
-  
   const [manualFormData, setManualFormData] = useState({
     message: '',
     mediaType: 'none',
@@ -54,10 +44,14 @@ function FacebookPage() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [autoPostHistory, setAutoPostHistory] = useState([]);
   const [manualPostHistory, setManualPostHistory] = useState([]);
-  const [schedulePostHistory, setSchedulePostHistory] = useState([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
-  const [isTogglingSchedule, setIsTogglingSchedule] = useState(false);
-  
+
+  const [showBulkComposer, setShowBulkComposer] = useState(false);
+  const [showAutomate, setShowAutomate] = useState(false);
+  const [autoReplyMessagesEnabled, setAutoReplyMessagesEnabled] = useState(true); // Default ON
+  const [autoReplyMessagesLoading, setAutoReplyMessagesLoading] = useState(false);
+  const [autoReplyMessagesError, setAutoReplyMessagesError] = useState(null);
+
   // Pagination states
   const [schedulePage, setSchedulePage] = useState(1);
   const [scheduleTotalPages, setScheduleTotalPages] = useState(1);
@@ -81,11 +75,152 @@ function FacebookPage() {
     isLoadingPosts: false
   });
 
-  const FACEBOOK_APP_ID = process.env.REACT_APP_FACEBOOK_APP_ID || '1526961221410200';
+  // Add this state for scheduleData
+  const [scheduleData, setScheduleData] = useState({
+    prompt: '',
+    time: '',
+    frequency: 'daily',
+    customDate: '',
+    isActive: false,
+    scheduleId: null
+  });
+
+  // Add new state for auto-reply message rule
+  const [autoReplyMessageRule, setAutoReplyMessageRule] = useState(null);
+
+  const FACEBOOK_APP_ID = process.env.REACT_APP_FACEBOOK_APP_ID || '697225659875731';
 
   // Mobile detection utility
   const isMobile = () => window.innerWidth <= 768;
-  const isSmallMobile = () => window.innerWidth <= 480;
+
+  const loadAutoReplySettings = useCallback(async () => {
+    if (!selectedPage) return;
+    
+    try {
+      console.log('🔄 Loading auto-reply settings for page:', selectedPage.id, selectedPage.name);
+      
+      // Get automation rules for Facebook auto-reply
+      const rules = await apiClient.getAutomationRules('facebook', 'AUTO_REPLY');
+      console.log('📋 Found automation rules:', rules);
+      
+      // Get social accounts to match with the selected page
+      const socialAccounts = await apiClient.getSocialAccounts();
+      const facebookAccounts = socialAccounts.filter(acc => 
+        acc.platform === 'facebook' && acc.is_connected
+      );
+      console.log('👥 Facebook accounts:', facebookAccounts);
+      
+      // Find the social account that matches the selected page
+      const matchingAccount = facebookAccounts.find(acc => 
+        acc.platform_user_id === selectedPage.id
+      );
+      console.log('🎯 Matching account:', matchingAccount);
+      
+      if (matchingAccount) {
+        // Find the auto-reply rule for this specific social account
+        const autoReplyRule = rules.find(rule => 
+          rule.social_account_id === matchingAccount.id
+        );
+        console.log('🤖 Auto-reply rule found:', autoReplyRule);
+        
+        if (autoReplyRule) {
+          setAutoReplySettings(prev => ({
+            ...prev,
+            enabled: autoReplyRule.is_active,
+            template: autoReplyRule.actions?.response_template || prev.template,
+            ruleId: autoReplyRule.id,
+            selectedPostIds: autoReplyRule.actions?.selected_post_ids || []
+          }));
+          console.log('✅ Auto-reply settings loaded:', {
+            enabled: autoReplyRule.is_active,
+            template: autoReplyRule.actions?.response_template,
+            ruleId: autoReplyRule.id,
+            selectedPostIds: autoReplyRule.actions?.selected_post_ids
+          });
+        } else {
+          // Reset to default state if no rule found
+          setAutoReplySettings(prev => ({
+            ...prev,
+            enabled: false,
+            template: 'Thank you for your comment! We appreciate your engagement. 😊',
+            ruleId: null,
+            selectedPostIds: []
+          }));
+          console.log('❌ No auto-reply rule found, using defaults');
+        }
+      } else {
+        // No matching account found, reset to default
+        setAutoReplySettings(prev => ({
+          ...prev,
+          enabled: false,
+          template: 'Thank you for your comment! We appreciate your engagement. 😊',
+          ruleId: null,
+          selectedPostIds: []
+        }));
+        console.log('❌ No matching account found, using defaults');
+      }
+    } catch (error) {
+      console.error('❌ Error loading auto-reply settings:', error);
+      // Keep current state on error
+    }
+  }, [selectedPage]);
+
+  const checkExistingFacebookConnections = useCallback(async () => {
+    try {
+      setIsCheckingStatus(true);
+      const response = await apiClient.getFacebookStatus();
+      
+      if (response.connected) {
+        setFacebookConnected(true);
+        
+        let socialAccounts = [];
+        let facebookAccounts = [];
+        
+        try {
+          socialAccounts = await apiClient.getSocialAccounts();
+          facebookAccounts = socialAccounts.filter(acc => 
+            acc.platform === 'facebook' && acc.is_connected
+          );
+        } catch (accountsError) {
+          console.warn('Failed to fetch social accounts:', accountsError);
+        }
+        
+        const pagesFromBackend = response.accounts.pages.map(page => {
+          const matchingAccount = facebookAccounts.find(acc => 
+            acc.platform_user_id === page.platform_id
+          );
+          
+          return {
+            id: page.platform_id,
+            internalId: matchingAccount?.id,
+            name: page.name,
+            category: page.category,
+            access_token: '',
+            profilePicture: page.profile_picture || '',
+            canPost: page.can_post,
+            canComment: page.can_comment,
+            followerCount: page.follower_count
+          };
+        });
+        
+        setAvailablePages(pagesFromBackend);
+        
+        if (pagesFromBackend.length === 1) {
+          setSelectedPage(pagesFromBackend[0]);
+          // Auto-reply settings will be loaded by the useEffect when selectedPage changes
+        }
+        
+        setConnectionStatus(`Connected! ${response.pages_count} Facebook page(s) available.`);
+      } else {
+        setConnectionStatus('Ready to connect your Facebook account');
+      }
+    } catch (error) {
+      console.error('Error checking Facebook status:', error);
+      setConnectionStatus('Unable to check Facebook connection status');
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  }, []);
 
   // Check for existing Facebook connections on component mount
   useEffect(() => {
@@ -100,7 +235,7 @@ function FacebookPage() {
     
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [checkExistingFacebookConnections]);
 
   // Cleanup on component unmount
   useEffect(() => {
@@ -119,6 +254,17 @@ function FacebookPage() {
     } catch (error) {
       console.warn('Drive status check failed:', error.message);
       setGoogleDriveAvailable(false);
+    }
+  };
+
+  const disconnectGoogleDrive = async () => {
+    try {
+      await apiClient.disconnectGoogleDrive();
+      setGoogleDriveAvailable(false);
+      setConnectionStatus('Google Drive disconnected successfully!');
+    } catch (error) {
+      console.error('Error disconnecting Google Drive:', error);
+      setConnectionStatus(`Failed to disconnect Google Drive: ${error.message}`);
     }
   };
 
@@ -168,21 +314,40 @@ function FacebookPage() {
     });
   };
 
+  const loadPostHistory = useCallback(async () => {
+    if (!selectedPage) return;
+    
+    try {
+      setIsLoadingPosts(true);
+      const response = await apiClient.getSocialPosts('facebook');
+      const posts = response.slice(0, 10);
+      
+      // Separate posts by type - only auto and manual posts here
+      // Scheduled posts are handled separately in loadScheduledPosts()
+      setAutoPostHistory(posts.filter((_, index) => index % 2 === 0));
+      setManualPostHistory(posts.filter((_, index) => index % 2 === 1));
+      // Note: schedulePostHistory is now managed by loadScheduledPosts()
+    } catch (error) {
+      console.error('Error loading post history:', error);
+    } finally {
+      setIsLoadingPosts(false);
+    }
+  }, [selectedPage]);
+
   // Load posts when page is selected or tab changes
   useEffect(() => {
     if (selectedPage && facebookConnected) {
       loadPostHistory();
       loadAutoReplySettings(); // Load auto-reply settings when page is selected
-      loadScheduledPosts(1); // Load scheduled posts and schedule data (reset to page 1)
     }
-  }, [selectedPage, facebookConnected, activeTab]);
+  }, [selectedPage, facebookConnected, activeTab, loadPostHistory]);
 
   const loadScheduledPosts = async (page = 1) => {
     if (!selectedPage) return;
     
     try {
       // Load scheduled posts from backend
-      const scheduledPostsResponse = await apiClient.getScheduledPosts();
+      const scheduledPostsResponse = await apiClient.getPosts('facebook', 'scheduled');
       console.log('📅 Loaded scheduled posts:', scheduledPostsResponse);
       
       // Filter scheduled posts for the current page
@@ -248,70 +413,13 @@ function FacebookPage() {
     }
   };
 
-  const checkExistingFacebookConnections = async () => {
-    try {
-      setIsCheckingStatus(true);
-      const response = await apiClient.getFacebookStatus();
-      
-      if (response.connected) {
-        setExistingConnections(response);
-        setFacebookConnected(true);
-        
-        let socialAccounts = [];
-        let facebookAccounts = [];
-        
-        try {
-          socialAccounts = await apiClient.getSocialAccounts();
-          facebookAccounts = socialAccounts.filter(acc => 
-            acc.platform === 'facebook' && acc.is_connected
-          );
-        } catch (accountsError) {
-          console.warn('Failed to fetch social accounts:', accountsError);
-        }
-        
-        const pagesFromBackend = response.accounts.pages.map(page => {
-          const matchingAccount = facebookAccounts.find(acc => 
-            acc.platform_user_id === page.platform_id
-          );
-          
-          return {
-            id: page.platform_id,
-            internalId: matchingAccount?.id,
-            name: page.name,
-            category: page.category,
-            access_token: '',
-            profilePicture: page.profile_picture || '',
-            canPost: page.can_post,
-            canComment: page.can_comment,
-            followerCount: page.follower_count
-          };
-        });
-        
-        setAvailablePages(pagesFromBackend);
-        
-        if (pagesFromBackend.length === 1) {
-          setSelectedPage(pagesFromBackend[0]);
-          // Load auto-reply settings for the single page
-          setTimeout(() => loadAutoReplySettings(), 500);
-        }
-        
-        setCardFlipped(true);
-        setConnectionStatus(`Connected! ${response.pages_count} Facebook page(s) available.`);
-      } else {
-        setConnectionStatus('Ready to connect your Facebook account');
-      }
-    } catch (error) {
-      console.error('Error checking Facebook status:', error);
-      setConnectionStatus('Unable to check Facebook connection status');
-    } finally {
-      setIsCheckingStatus(false);
-    }
-  };
-
   const handleFacebookLogout = async () => {
     try {
+      // Ensure scheduleData is always defined
+      const safeScheduleData = scheduleData || {};
+
       // Check for active schedules before disconnecting
-      if (selectedPage && scheduleData.isActive) {
+      if (selectedPage && safeScheduleData.isActive) {
         const confirmDisconnect = window.confirm(
           `⚠️ Warning: You have an active schedule for "${selectedPage.name}". Disconnecting will deactivate this schedule. Do you want to continue?`
         );
@@ -322,7 +430,7 @@ function FacebookPage() {
         
         // Deactivate the schedule before disconnecting
         try {
-          await apiClient.deleteScheduledPost(scheduleData.scheduleId);
+          await apiClient.deleteScheduledPost(safeScheduleData.scheduleId);
           console.log('✅ Schedule deactivated before disconnect');
         } catch (scheduleError) {
           console.warn('Failed to deactivate schedule before disconnect:', scheduleError);
@@ -335,13 +443,10 @@ function FacebookPage() {
       await apiClient.logoutFacebook();
       
       setFacebookConnected(false);
-      setExistingConnections(null);
       setAvailablePages([]);
       setSelectedPage(null);
-      setCardFlipped(false);
       setAutoPostHistory([]);
       setManualPostHistory([]);
-      setSchedulePostHistory([]);
       
       // Reset schedule data
       setScheduleData({
@@ -367,150 +472,18 @@ function FacebookPage() {
     }
   };
 
-  const loadPostHistory = async () => {
-    if (!selectedPage) return;
-    
-    try {
-      setIsLoadingPosts(true);
-      const response = await apiClient.getSocialPosts('facebook');
-      const posts = response.slice(0, 10);
-      
-      // Separate posts by type - only auto and manual posts here
-      // Scheduled posts are handled separately in loadScheduledPosts()
-      setAutoPostHistory(posts.filter((_, index) => index % 2 === 0));
-      setManualPostHistory(posts.filter((_, index) => index % 2 === 1));
-      // Note: schedulePostHistory is now managed by loadScheduledPosts()
-    } catch (error) {
-      console.error('Error loading post history:', error);
-    } finally {
-      setIsLoadingPosts(false);
-    }
-  };
-
   const getCurrentPostHistory = () => {
     switch (activeTab) {
       case 'auto':
         return autoPostHistory;
       case 'manual':
         return manualPostHistory;
-      case 'schedule':
-        return schedulePostHistory;
       default:
         return autoPostHistory;
     }
   };
 
-  const handleScheduleToggle = async () => {
-    if (!selectedPage) {
-      setConnectionStatus('Please select a page first');
-      return;
-    }
 
-    if (!scheduleData.prompt || (!scheduleData.time && scheduleData.frequency !== 'custom')) {
-      setConnectionStatus('Please fill in prompt and time before activating schedule');
-      return;
-    }
-
-    if (isTogglingSchedule) {
-      return; // Prevent multiple rapid clicks
-    }
-
-    let internalAccountId = selectedPage.internalId;
-    
-    if (!internalAccountId) {
-      try {
-        const socialAccounts = await apiClient.getSocialAccounts();
-        const facebookAccounts = socialAccounts.filter(acc => 
-          acc.platform === 'facebook' && acc.is_connected
-        );
-        
-        const matchingAccount = facebookAccounts.find(acc => 
-          acc.platform_user_id === selectedPage.id
-        );
-        
-        if (matchingAccount) {
-          internalAccountId = matchingAccount.id;
-          setSelectedPage(prev => ({
-            ...prev,
-            internalId: matchingAccount.id
-          }));
-        } else {
-          setConnectionStatus('Unable to find account information. Please reconnect your Facebook account.');
-          return;
-        }
-      } catch (error) {
-        console.error('Failed to fetch account information:', error);
-        setConnectionStatus('Unable to find account information. Please reconnect your Facebook account.');
-        return;
-      }
-    }
-
-    try {
-      setIsTogglingSchedule(true);
-      
-      if (!scheduleData.isActive) {
-        setConnectionStatus('Creating scheduled post...');
-        
-        const postTime = scheduleData.frequency === 'custom' ? scheduleData.customDate : scheduleData.time;
-        
-        const response = await apiClient.createScheduledPost({
-          prompt: scheduleData.prompt,
-          post_time: postTime,
-          frequency: scheduleData.frequency,
-          social_account_id: internalAccountId
-        });
-
-        setScheduleData(prev => ({ 
-          ...prev, 
-          isActive: true,
-          scheduleId: response.data.id
-        }));
-        
-        setConnectionStatus('Schedule activated successfully! Posts will be published automatically.');
-        
-        // Reload scheduled posts to update the UI
-        setTimeout(() => {
-          loadScheduledPosts(1);
-        }, 1000);
-        
-      } else {
-        if (scheduleData.scheduleId) {
-          setConnectionStatus('Deactivating schedule...');
-          // Use deactivate endpoint instead of delete
-          await apiClient.deactivateScheduledPost(scheduleData.scheduleId);
-          setConnectionStatus('Schedule deactivated successfully');
-        }
-        
-        // Immediately update local state
-        setScheduleData(prev => ({ 
-          ...prev, 
-          isActive: false,
-          scheduleId: null
-        }));
-        
-        // Reload scheduled posts to update the UI
-        setTimeout(() => {
-          loadScheduledPosts(1);
-        }, 1000);
-      }
-      
-    } catch (error) {
-      console.error('Schedule toggle error:', error);
-      
-      // Handle specific error for existing active schedule
-      if (error.message && error.message.includes('active schedule already exists')) {
-        setConnectionStatus('An active schedule already exists. Please deactivate it first.');
-        // Reload to show the existing active schedule
-        setTimeout(() => {
-          loadScheduledPosts(1);
-        }, 1000);
-      } else {
-        setConnectionStatus('Failed to update schedule: ' + (error.message || 'Unknown error'));
-      }
-    } finally {
-      setIsTogglingSchedule(false);
-    }
-  };
 
   const handleAutoReplyToggle = async () => {
     if (!selectedPage) {
@@ -674,7 +647,6 @@ function FacebookPage() {
         setTimeout(() => loadAutoReplySettings(), 500);
       }
       setFacebookConnected(true);
-      setCardFlipped(true);
       setIsConnecting(false);
       return { mappedPages, userInfo };
     } catch (error) {
@@ -860,7 +832,7 @@ function FacebookPage() {
       }
       
       // Get fresh token for picker
-      const authResult = await apiClient.getGoogleDriveToken();
+      await apiClient.getGoogleDriveToken();
       
       // Open Google Drive picker
       const picker = new window.google.picker.PickerBuilder()
@@ -868,7 +840,7 @@ function FacebookPage() {
           .setIncludeFolders(true)
           .setSelectFolderEnabled(false)
           .setMimeTypes(filePickerType === 'photo' ? 'image/*' : 'video/*'))
-        .setOAuthToken(authResult.access_token)
+        // .setOAuthToken(authResult.access_token) // Removed to prevent Facebook SDK conflicts
         .setDeveloperKey(process.env.REACT_APP_GOOGLE_DEVELOPER_KEY || '')
         .setCallback(handleGoogleDriveCallback)
         .enableFeature(window.google.picker.Feature.NAV_HIDDEN)
@@ -910,16 +882,7 @@ function FacebookPage() {
     });
   };
 
-  const getGoogleDriveToken = async () => {
-    // This would typically come from your backend after user authentication
-    // For now, we'll use a placeholder - you'll need to implement OAuth flow
-    try {
-      const response = await apiClient.getGoogleDriveToken();
-      return response.access_token;
-    } catch (error) {
-      throw new Error('Google Drive authentication required. Please connect your Google account first.');
-    }
-  };
+
 
   const handleGoogleDriveCallback = async (data) => {
     if (data.action === window.google.picker.Action.PICKED) {
@@ -1342,34 +1305,7 @@ function FacebookPage() {
     }
   };
 
-  const refreshTokens = async () => {
-    try {
-      setConnectionStatus('Refreshing Facebook tokens...');
-      const response = await apiClient.refreshFacebookTokens();
-      
-      if (response.data.summary.expired > 0) {
-        setConnectionStatus(`Token refresh complete. ${response.data.summary.expired} account(s) need reconnection.`);
-        setFacebookConnected(false);
-        setTimeout(() => {
-          checkExistingFacebookConnections();
-        }, 1000);
-      } else {
-        setConnectionStatus(`All tokens are valid. ${response.data.summary.valid} account(s) verified.`);
-        checkExistingFacebookConnections();
-      }
-    } catch (error) {
-      console.error('Token refresh error:', error);
-      if (error.response?.status === 401) {
-        setConnectionStatus('Your session has expired. Please log out and log back in.');
-        setTimeout(() => {
-          logout();
-          navigate('/');
-        }, 3000);
-      } else {
-        setConnectionStatus('Failed to refresh tokens: ' + (error.response?.data?.detail || error.message));
-      }
-    }
-  };
+
 
   const getStatusCardClass = () => {
     if (connectionStatus.includes('Failed') || connectionStatus.includes('error') || connectionStatus.includes('Error')) {
@@ -1378,78 +1314,6 @@ function FacebookPage() {
       return 'status-card success';
     } else {
       return 'status-card info';
-    }
-  };
-
-  const loadAutoReplySettings = async () => {
-    if (!selectedPage) return;
-    
-    try {
-      console.log('🔄 Loading auto-reply settings for page:', selectedPage.id, selectedPage.name);
-      
-      // Get automation rules for Facebook auto-reply
-      const rules = await apiClient.getAutomationRules('facebook', 'auto_reply');
-      console.log('📋 Found automation rules:', rules);
-      
-      // Get social accounts to match with the selected page
-      const socialAccounts = await apiClient.getSocialAccounts();
-      const facebookAccounts = socialAccounts.filter(acc => 
-        acc.platform === 'facebook' && acc.is_connected
-      );
-      console.log('👥 Facebook accounts:', facebookAccounts);
-      
-      // Find the social account that matches the selected page
-      const matchingAccount = facebookAccounts.find(acc => 
-        acc.platform_user_id === selectedPage.id
-      );
-      console.log('🎯 Matching account:', matchingAccount);
-      
-      if (matchingAccount) {
-        // Find the auto-reply rule for this specific social account
-        const autoReplyRule = rules.find(rule => 
-          rule.social_account_id === matchingAccount.id
-        );
-        console.log('🤖 Auto-reply rule found:', autoReplyRule);
-        
-        if (autoReplyRule) {
-          setAutoReplySettings(prev => ({
-            ...prev,
-            enabled: autoReplyRule.is_active,
-            template: autoReplyRule.actions?.response_template || prev.template,
-            ruleId: autoReplyRule.id,
-            selectedPostIds: autoReplyRule.actions?.selected_post_ids || []
-          }));
-          console.log('✅ Auto-reply settings loaded:', {
-            enabled: autoReplyRule.is_active,
-            template: autoReplyRule.actions?.response_template,
-            ruleId: autoReplyRule.id,
-            selectedPostIds: autoReplyRule.actions?.selected_post_ids
-          });
-        } else {
-          // Reset to default state if no rule found
-          setAutoReplySettings(prev => ({
-            ...prev,
-            enabled: false,
-            template: 'Thank you for your comment! We appreciate your engagement. 😊',
-            ruleId: null,
-            selectedPostIds: []
-          }));
-          console.log('❌ No auto-reply rule found, using defaults');
-        }
-      } else {
-        // No matching account found, reset to default
-        setAutoReplySettings(prev => ({
-          ...prev,
-          enabled: false,
-          template: 'Thank you for your comment! We appreciate your engagement. 😊',
-          ruleId: null,
-          selectedPostIds: []
-        }));
-        console.log('❌ No matching account found, using defaults');
-      }
-    } catch (error) {
-      console.error('❌ Error loading auto-reply settings:', error);
-      // Keep current state on error
     }
   };
 
@@ -1538,6 +1402,54 @@ function FacebookPage() {
     // Load posts when opening settings
     if (newShowSettings && autoReplySettings.availablePosts.length === 0) {
       loadPostsForAutoReply();
+    }
+  };
+
+  // Fetch AUTO_REPLY_MESSAGE rule for selected page
+  const loadAutoReplyMessageRule = useCallback(async () => {
+    if (!selectedPage) return;
+    setAutoReplyMessagesLoading(true);
+    setAutoReplyMessagesError(null);
+    try {
+      const rules = await apiClient.getAutomationRules('facebook', 'AUTO_REPLY_MESSAGE');
+      // Find the rule for this page
+      const socialAccounts = await apiClient.getSocialAccounts();
+      const matchingAccount = socialAccounts.find(acc => acc.platform === 'facebook' && acc.platform_user_id === selectedPage.id);
+      const rule = rules.find(r => r.social_account_id === matchingAccount?.id);
+      if (rule) {
+        setAutoReplyMessageRule(rule);
+        setAutoReplyMessagesEnabled(rule.is_active !== false); // Default ON if undefined
+      } else {
+        setAutoReplyMessageRule(null);
+        setAutoReplyMessagesEnabled(true); // Default ON if no rule
+      }
+    } catch (err) {
+      setAutoReplyMessagesError('Failed to load auto-reply message rule.');
+    } finally {
+      setAutoReplyMessagesLoading(false);
+    }
+  }, [selectedPage]);
+
+  // Call on page load and when selectedPage changes
+  useEffect(() => {
+    loadAutoReplyMessageRule();
+  }, [selectedPage, loadAutoReplyMessageRule]);
+
+  // Handler for toggling auto-reply messages
+  const handleAutoReplyMessagesToggle = async () => {
+    if (!autoReplyMessageRule) return;
+    setAutoReplyMessagesLoading(true);
+    setAutoReplyMessagesError(null);
+    try {
+      const updated = await apiClient.updateAutomationRule(autoReplyMessageRule.id, {
+        is_active: !autoReplyMessagesEnabled
+      });
+      setAutoReplyMessagesEnabled(updated.is_active);
+      setAutoReplyMessageRule(updated);
+    } catch (err) {
+      setAutoReplyMessagesError('Failed to update auto-reply message rule.');
+    } finally {
+      setAutoReplyMessagesLoading(false);
     }
   };
 
@@ -1687,157 +1599,7 @@ function FacebookPage() {
               {/* Main Content Area */}
               {selectedPage && (
                 <div className="facebook-content-area">
-                  {/* Auto-Reply Settings */}
-                  <div className="auto-reply-section">
-                    <div className="auto-reply-header">
-                      <div className="auto-reply-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M8 12h.01"/>
-                          <path d="M12 12h.01"/>
-                          <path d="M16 12h.01"/>
-                          <path d="M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-                        </svg>
-                        <span className="auto-reply-label">AI Auto-Reply</span>
-                        <span className={`auto-reply-status ${autoReplySettings.enabled ? 'enabled' : 'disabled'}`}>
-                          {autoReplySettings.enabled ? 'ON' : 'OFF'}
-                        </span>
-                        {autoReplySettings.enabled && autoReplySettings.selectedPostIds.length > 0 && (
-                          <span className="auto-reply-count">
-                            ({autoReplySettings.selectedPostIds.length} post{autoReplySettings.selectedPostIds.length !== 1 ? 's' : ''})
-                          </span>
-                        )}
-                      </div>
-                      <div className="auto-reply-controls">
-                        <button
-                          onClick={handleSettingsToggle}
-                          className="btn btn-secondary btn-small"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="12" cy="12" r="3"/>
-                            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"/>
-                          </svg>
-                          Settings
-                        </button>
-                        <button
-                          onClick={handleAutoReplyToggle}
-                          disabled={autoReplySettings.isLoading || (!autoReplySettings.enabled && autoReplySettings.selectedPostIds.length === 0)}
-                          className={`btn ${autoReplySettings.enabled ? 'btn-danger' : 'btn-success'} btn-small`}
-                        >
-                          {autoReplySettings.isLoading ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                            </svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M9 12l2 2 4-4"/>
-                            </svg>
-                          )}
-                          {autoReplySettings.isLoading 
-                            ? (isMobile() ? '...' : 'Updating...') 
-                            : (autoReplySettings.enabled ? (isMobile() ? 'Off' : 'Disable') : (isMobile() ? 'On' : 'Enable'))
-                          }
-                        </button>
-                      </div>
-                    </div>
-                    {autoReplySettings.showSettings && (
-                      <div className="auto-reply-settings">
-                        <div className="auto-reply-posts-section">
-                          <div className="auto-reply-posts-header">
-                            <h4>Select Posts for Auto-Reply</h4>
-                            <div className="auto-reply-posts-controls">
-                              <button
-                                onClick={selectAllPosts}
-                                disabled={autoReplySettings.isLoadingPosts}
-                                className="btn btn-secondary btn-small"
-                              >
-                                Select All
-                              </button>
-                              <button
-                                onClick={deselectAllPosts}
-                                disabled={autoReplySettings.isLoadingPosts}
-                                className="btn btn-secondary btn-small"
-                              >
-                                Deselect All
-                              </button>
-                            </div>
-                          </div>
-                          
-                          {autoReplySettings.isLoadingPosts ? (
-                            <div className="loading-posts">
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                              </svg>
-                              Loading posts...
-                            </div>
-                          ) : autoReplySettings.availablePosts.length > 0 ? (
-                            <div className="auto-reply-posts-list">
-                              {autoReplySettings.availablePosts.map((post) => (
-                                <div
-                                  key={post.id}
-                                  className={`auto-reply-post-item ${autoReplySettings.selectedPostIds.includes(post.id) ? 'selected' : ''}`}
-                                  onClick={() => handlePostSelection(post.id)}
-                                  onTouchStart={(e) => handlePostTouch(post.id, e)}
-                                >
-                                  <div className="post-checkbox">
-                                    <input
-                                      type="checkbox"
-                                      checked={autoReplySettings.selectedPostIds.includes(post.id)}
-                                      onChange={() => handlePostSelection(post.id)}
-                                      onClick={(e) => e.stopPropagation()}
-                                    />
-                                  </div>
-                                  <div className="post-content">
-                                    <p className="post-text">{post.content}</p>
-                                    <div className="post-meta">
-                                      <span className="post-date">
-                                        {new Date(post.created_at).toLocaleDateString()}
-                                      </span>
-                                      {post.has_media && (
-                                        <span className="post-media">
-                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                            <circle cx="8.5" cy="8.5" r="1.5"/>
-                                            <polyline points="21,15 16,10 5,21"/>
-                                          </svg>
-                                          {post.media_count} media
-                                        </span>
-                                      )}
-                                      <span className={`post-status ${post.status}`}>
-                                        {post.status}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="no-posts-message">
-                              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                              </svg>
-                              <p>No posts found. Create some posts first to enable auto-reply.</p>
-                            </div>
-                          )}
-                        </div>
-                        
-                        <div className="form-group">
-                          <label>AI Response Template (Optional)</label>
-                          <textarea
-                            value={autoReplySettings.template}
-                            onChange={(e) => setAutoReplySettings(prev => ({ ...prev, template: e.target.value }))}
-                            placeholder="e.g., 'Thank you for your comment! We appreciate your engagement.' (Optional - AI will generate contextual replies mentioning the commenter)"
-                            className="form-textarea"
-                            rows="2"
-                          />
-                          <small className="form-helper">
-                            Leave empty for AI-generated contextual replies, or provide a guide for the AI. The AI will always mention the commenter.
-                          </small>
-                        </div>
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Tab Navigation */}
                   <div className="tab-navigation">
                     <button
                       className={`tab-button ${activeTab === 'auto' ? 'active' : ''}`}
@@ -1859,507 +1621,499 @@ function FacebookPage() {
                       {isMobile() ? 'Manual' : 'Manual Post'}
                     </button>
                     <button
-                      className={`tab-button ${activeTab === 'schedule' ? 'active' : ''}`}
+                      className={`tab-button ${activeTab === 'bulk' ? 'active' : ''}`}
                       onClick={() => {
-                        console.log('Schedule tab clicked');
-                        setActiveTab('schedule');
+                        setActiveTab('bulk');
+                        setShowBulkComposer(true);
                       }}
-                      style={{ zIndex: 2, position: 'relative' }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12,6 12,12 16,14"/>
+                        <path d="M3 3h18v18H3z"/>
+                        <path d="M9 9h6v6H9z"/>
+                        <path d="M15 3v18"/>
+                        <path d="M9 3v18"/>
                       </svg>
-                      {isMobile() ? 'Schedule' : 'Schedule'}
+                      {isMobile() ? 'Bulk' : 'Bulk Composer'}
+                    </button>
+                    <button
+                      className={`tab-button ${activeTab === 'automate' ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveTab('automate');
+                        setShowAutomate(true);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                      {isMobile() ? 'Automate' : 'Automate'}
                     </button>
                   </div>
 
                   {/* Tab Content */}
                   <div className="tab-content">
+                    {/* Automate Tab */}
+                    {activeTab === 'automate' && (
+                      <div className="automate-section">
+                        <h3>Automate</h3>
+                        <div className="automate-toggles">
+                          <div className="automate-toggle" style={{ alignItems: 'center', gap: 8 }}>
+                            <label htmlFor="auto-reply-comments-toggle" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              Auto-Reply Comments
+                              <span
+                                title="Auto-reply to comments is always enabled for all posts. Every new post will automatically have AI-powered comment replies."
+                                aria-label="Info: Auto-reply to comments is always enabled for all posts."
+                                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                              >
+                                <svg style={{ marginLeft: 2, verticalAlign: 'middle' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2">
+                                  <circle cx="12" cy="12" r="10"/>
+                                  <line x1="12" y1="8" x2="12" y2="12"/>
+                                  <circle cx="12" cy="16" r="1"/>
+                                </svg>
+                              </span>
+                            </label>
+                            <input
+                              id="auto-reply-comments-toggle"
+                              type="checkbox"
+                              checked={true}
+                              disabled
+                              style={{ accentColor: '#28a745', cursor: 'not-allowed' }}
+                              aria-label="Auto-Reply Comments Always On"
+                            />
+                            <span className="automate-toggle-status enabled" style={{ color: '#28a745', fontWeight: 600 }}>Always On</span>
+                          </div>
+                          <div className="automate-toggle-row" style={{ marginTop: 16 }}>
+                            <label htmlFor="auto-reply-messages-toggle">Auto-Reply Messages</label>
+                            <input
+                              id="auto-reply-messages-toggle"
+                              type="checkbox"
+                              checked={autoReplyMessagesEnabled}
+                              disabled={autoReplyMessagesLoading || !autoReplyMessageRule}
+                              onChange={handleAutoReplyMessagesToggle}
+                              aria-label="Toggle Auto-Reply Messages"
+                            />
+                            <span className={`automate-toggle-status ${autoReplyMessagesEnabled ? 'enabled' : 'disabled'}`}>{autoReplyMessagesEnabled ? 'On' : 'Off'}</span>
+                            {autoReplyMessagesLoading && <span className="automate-loading">Loading...</span>}
+                            {autoReplyMessagesError && <span className="automate-error">{autoReplyMessagesError}</span>}
+                          </div>
+                        </div>
+                        <div className="automate-info" style={{ background: '#f5f7fa', borderRadius: 6, padding: 12, marginTop: 16, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1877f2" strokeWidth="2" style={{ verticalAlign: 'middle', marginTop: 2 }}>
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="12"/>
+                            <circle cx="12" cy="16" r="1"/>
+                          </svg>
+                          <span>
+                            <strong>Auto-reply to comments is always enabled for all posts.</strong> Every new post will automatically have AI-powered comment replies.
+                          </span>
+                        </div>
+                        <div className="automate-message-template" style={{ marginTop: 16 }}>
+                          <label>Message Template:</label>
+                          <div className="automate-message-template-box" style={{ background: '#f5f7fa', borderRadius: 4, padding: 8, color: '#888', fontStyle: 'italic' }}>
+                            {autoReplyMessageRule?.actions?.message_template || "Thank you for your message! We'll get back to you soon."}
+                          </div>
+                          <div style={{ color: '#888', fontSize: '0.95em', marginTop: 4 }}>
+                            (To change the auto-reply template or logic, contact your admin.)
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* AI Generate Tab */}
                     {activeTab === 'auto' && (
-                      <div className="auto-post-form">
-                        <h3>AI Content Generation</h3>
-                        
-                        {/* AI Prompt Input */}
-                        <div className="form-group">
-                          <label>Content Prompt</label>
-                          <textarea
-                            name="prompt"
-                            value={autoFormData.prompt}
-                            onChange={handleAutoInputChange}
-                            placeholder="Describe what you want to post about..."
-                            className="form-textarea"
-                            rows="3"
-                          />
-                        </div>
-
-                        {/* Generate Content Button */}
-                        <div className="form-group">
-                          <button
-                            onClick={generatePostContent}
-                            disabled={!autoFormData.prompt.trim() || autoFormData.isGenerating}
-                            className="btn btn-primary"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                            </svg>
-                            {autoFormData.isGenerating ? 'Generating...' : 'Generate Content'}
-                          </button>
-                        </div>
-
-                        {/* Generated Content Display */}
-                        {autoFormData.generatedContent && (
+                      <>
+                        <div className="auto-post-form">
+                          <h3>AI Content Generation</h3>
+                          
+                          {/* AI Prompt Input */}
                           <div className="form-group">
-                            <label>Generated Content</label>
+                            <label>Content Prompt</label>
                             <textarea
-                              value={autoFormData.generatedContent}
-                              readOnly
-                              className="form-textarea generated-content"
-                              rows="4"
+                              name="prompt"
+                              value={autoFormData.prompt}
+                              onChange={handleAutoInputChange}
+                              placeholder="Describe what you want to post about..."
+                              className="form-textarea"
+                              rows="3"
                             />
                           </div>
-                        )}
 
-                        {/* Media Options */}
-                        <div className="form-group">
-                          <label>Media Options</label>
-                          <div className="media-options">
+                          {/* Generate Content Button */}
+                          <div className="form-group">
                             <button
-                              type="button"
-                              className={`media-option ${autoFormData.mediaType === 'none' ? 'active' : ''}`}
-                              onClick={() => handleMediaTypeChange('none', 'auto')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                <polyline points="14,2 14,8 20,8"/>
-                                <line x1="16" y1="13" x2="8" y2="13"/>
-                                <line x1="16" y1="17" x2="8" y2="17"/>
-                                <polyline points="10,9 9,9 8,9"/>
-                              </svg>
-                              Text Only
-                            </button>
-                            <button
-                              type="button"
-                              className={`media-option ${autoFormData.mediaType === 'ai_image' ? 'active' : ''}`}
-                              onClick={() => handleMediaTypeChange('ai_image', 'auto')}
+                              onClick={generatePostContent}
+                              disabled={!autoFormData.prompt.trim() || autoFormData.isGenerating}
+                              className="btn btn-primary"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                               </svg>
-                              AI Image
+                              {autoFormData.isGenerating ? 'Generating...' : 'Generate Content'}
                             </button>
                           </div>
-                        </div>
 
-                        {/* AI Image Generation */}
-                        {autoFormData.mediaType === 'ai_image' && (
-                          <div className="ai-image-section">
+                          {/* Generated Content Display */}
+                          {autoFormData.generatedContent && (
                             <div className="form-group">
-                              <label>Image Prompt</label>
-                              <input
-                                type="text"
-                                name="imagePrompt"
-                                value={autoFormData.imagePrompt}
-                                onChange={handleAutoInputChange}
-                                placeholder="Describe the image you want to generate..."
-                                className="form-input"
+                              <label>Generated Content</label>
+                              <textarea
+                                value={autoFormData.generatedContent}
+                                readOnly
+                                className="form-textarea generated-content"
+                                rows="4"
                               />
                             </div>
-                            <div className="form-group">
+                          )}
+
+                          {/* Media Options */}
+                          <div className="form-group">
+                            <label>Media Options</label>
+                            <div className="media-options">
                               <button
-                                onClick={() => generateImage('auto')}
-                                disabled={!autoFormData.imagePrompt.trim() || autoFormData.isGeneratingImage}
-                                className="btn btn-secondary"
+                                type="button"
+                                className={`media-option ${autoFormData.mediaType === 'none' ? 'active' : ''}`}
+                                onClick={() => handleMediaTypeChange('none', 'auto')}
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                                  <polyline points="21,15 16,10 5,21"/>
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                  <polyline points="14,2 14,8 20,8"/>
+                                  <line x1="16" y1="13" x2="8" y2="13"/>
+                                  <line x1="16" y1="17" x2="8" y2="17"/>
+                                  <polyline points="10,9 9,9 8,9"/>
                                 </svg>
-                                {autoFormData.isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                Text Only
+                              </button>
+                              <button
+                                type="button"
+                                className={`media-option ${autoFormData.mediaType === 'ai_image' ? 'active' : ''}`}
+                                onClick={() => handleMediaTypeChange('ai_image', 'auto')}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                                </svg>
+                                AI Image
                               </button>
                             </div>
-                            {autoFormData.generatedImageUrl && (
+                          </div>
+
+                          {/* AI Image Generation */}
+                          {autoFormData.mediaType === 'ai_image' && (
+                            <div className="ai-image-section">
                               <div className="form-group">
-                                <label>Generated Image</label>
-                                <div className="image-preview">
-                                  <img 
-                                    src={autoFormData.generatedImageUrl} 
-                                    alt="Generated" 
-                                    className="preview-image"
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Generate Both Button */}
-                        <div className="form-group">
-                          <button
-                            onClick={generateImageWithCaption}
-                            disabled={!autoFormData.prompt.trim() || autoFormData.isGenerating || autoFormData.isGeneratingImage}
-                            className="btn btn-success"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                            </svg>
-                            Generate Content + Image
-                          </button>
-                        </div>
-
-                        {/* Publish Button */}
-                        <div className="form-group">
-                          <button
-                            onClick={publishPost}
-                            disabled={!autoFormData.generatedContent || isPublishing}
-                            className="btn btn-primary btn-large"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M22 2L11 13"/>
-                              <polygon points="22,2 15,22 11,13 2,9"/>
-                            </svg>
-                            {isPublishing ? 'Publishing...' : 'Publish Post'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Manual Post Tab */}
-                    {activeTab === 'manual' && (
-                      <div className="manual-post-form">
-                        <h3>Manual Post</h3>
-                        
-                        {/* Message Input */}
-                        <div className="form-group">
-                          <label>Post Message</label>
-                          <textarea
-                            name="message"
-                            value={manualFormData.message}
-                            onChange={handleManualInputChange}
-                            placeholder="What's on your mind?"
-                            className="form-textarea"
-                            rows="4"
-                          />
-                        </div>
-
-                        {/* Media Options */}
-                        <div className="form-group">
-                          <label>Media Options</label>
-                          <div className="media-options">
-                            <button
-                              type="button"
-                              className={`media-option ${manualFormData.mediaType === 'none' ? 'active' : ''}`}
-                              onClick={() => handleMediaTypeChange('none', 'manual')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                <polyline points="14,2 14,8 20,8"/>
-                                <line x1="16" y1="13" x2="8" y2="13"/>
-                                <line x1="16" y1="17" x2="8" y2="17"/>
-                                <polyline points="10,9 9,9 8,9"/>
-                              </svg>
-                              Text Only
-                            </button>
-                            <button
-                              type="button"
-                              className={`media-option ${manualFormData.mediaType === 'photo' ? 'active' : ''}`}
-                              onClick={() => handleMediaTypeChange('photo', 'manual')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                <circle cx="8.5" cy="8.5" r="1.5"/>
-                                <polyline points="21,15 16,10 5,21"/>
-                              </svg>
-                              Upload Photo
-                            </button>
-                            <button
-                              type="button"
-                              className={`media-option ${manualFormData.mediaType === 'video' ? 'active' : ''}`}
-                              onClick={() => handleMediaTypeChange('video', 'manual')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <polygon points="23,7 16,12 23,17 23,7"/>
-                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                              </svg>
-                              Upload Video
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Photo Upload */}
-                        {manualFormData.mediaType === 'photo' && (
-                          <div className="form-group">
-                            <label>Upload Photo</label>
-                            <input
-                              type="file"
-                              name="mediaFile"
-                              accept="image/*"
-                              onChange={handleManualInputChange}
-                              className="form-file-input"
-                            />
-                            {manualFormData.mediaFile && (
-                              <div className="image-preview">
-                                <img 
-                                  src={URL.createObjectURL(manualFormData.mediaFile)} 
-                                  alt="Preview" 
-                                  className="preview-image"
+                                <label>Image Prompt</label>
+                                <input
+                                  type="text"
+                                  name="imagePrompt"
+                                  value={autoFormData.imagePrompt}
+                                  onChange={handleAutoInputChange}
+                                  placeholder="Describe the image you want to generate..."
+                                  className="form-input"
                                 />
                               </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Video Upload */}
-                        {manualFormData.mediaType === 'video' && (
-                          <div className="form-group">
-                            <label>Upload Video</label>
-                            <input
-                              type="file"
-                              name="mediaFile"
-                              accept="video/*"
-                              onChange={handleManualInputChange}
-                              className="form-file-input"
-                            />
-                            {manualFormData.mediaFile && (
-                              <div className="video-preview">
-                                <video 
-                                  src={URL.createObjectURL(manualFormData.mediaFile)} 
-                                  controls
-                                  className="preview-video"
-                                  style={{ maxWidth: '100%', maxHeight: '300px' }}
-                                />
-                                <div className="video-info">
-                                  <p>File: {manualFormData.mediaFile.name}</p>
-                                  <p>Size: {(manualFormData.mediaFile.size / (1024 * 1024)).toFixed(2)} MB</p>
-                                </div>
+                              <div className="form-group">
+                                <button
+                                  onClick={() => generateImage('auto')}
+                                  disabled={!autoFormData.imagePrompt.trim() || autoFormData.isGeneratingImage}
+                                  className="btn btn-secondary"
+                                >
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                                    <polyline points="21,15 16,10 5,21"/>
+                                  </svg>
+                                  {autoFormData.isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                </button>
                               </div>
-                            )}
-                          </div>
-                        )}
+                              {autoFormData.generatedImageUrl && (
+                                <div className="form-group">
+                                  <label>Generated Image</label>
+                                  <div className="image-preview">
+                                    <img 
+                                      src={autoFormData.generatedImageUrl} 
+                                      alt="Generated" 
+                                      className="preview-image"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
-                        {/* Publish Button */}
-                        <div className="form-group">
-                          <button
-                            onClick={publishPost}
-                            disabled={!manualFormData.message.trim() || isPublishing}
-                            className="btn btn-primary btn-large"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M22 2L11 13"/>
-                              <polygon points="22,2 15,22 11,13 2,9"/>
-                            </svg>
-                            {isPublishing ? 'Publishing...' : 'Publish Post'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Schedule Tab */}
-                    {activeTab === 'schedule' && (
-                      <div className="schedule-form">
-                        <h3>Schedule Posts</h3>
-                        
-                        <div className="form-group">
-                          <label>Content Prompt</label>
-                          <textarea
-                            value={scheduleData.prompt}
-                            onChange={(e) => setScheduleData(prev => ({ ...prev, prompt: e.target.value }))}
-                            placeholder="What should be posted automatically?"
-                            className="form-textarea"
-                            rows="3"
-                          />
-                        </div>
-
-                        <div className="form-group">
-                          <label>Frequency</label>
-                          <select
-                            value={scheduleData.frequency}
-                            onChange={(e) => setScheduleData(prev => ({ ...prev, frequency: e.target.value }))}
-                            className="form-select"
-                          >
-                            <option value="once">Once</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="monthly">Monthly</option>
-                            <option value="custom">Selecting a particular date</option>
-                          </select>
-                        </div>
-
-                        {scheduleData.frequency === 'custom' ? (
+                          {/* Generate Both Button */}
                           <div className="form-group">
-                            <label>Custom Date & Time</label>
-                            <input
-                              type="datetime-local"
-                              value={scheduleData.customDate}
-                              onChange={(e) => setScheduleData(prev => ({ ...prev, customDate: e.target.value }))}
-                              className="form-input"
-                            />
-                          </div>
-                        ) : (
-                          <div className="form-group">
-                            <label>Schedule Time</label>
-                            <input
-                              type="time"
-                              value={scheduleData.time}
-                              onChange={(e) => setScheduleData(prev => ({ ...prev, time: e.target.value }))}
-                              className="form-input"
-                            />
-                          </div>
-                        )}
-
-                        <div className="form-group">
-                          <button
-                            onClick={handleScheduleToggle}
-                            disabled={isTogglingSchedule}
-                            className={`btn ${scheduleData.isActive ? 'btn-danger' : 'btn-success'} btn-large`}
-                          >
-                            {isTogglingSchedule ? (
+                            <button
+                              onClick={generateImageWithCaption}
+                              disabled={!autoFormData.prompt.trim() || autoFormData.isGenerating || autoFormData.isGeneratingImage}
+                              className="btn btn-success"
+                            >
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                              </svg>
+                              Generate Content + Image
+                            </button>
+                          </div>
+
+                          {/* Publish Button */}
+                          <div className="form-group">
+                            <button
+                              onClick={publishPost}
+                              disabled={!autoFormData.generatedContent || isPublishing}
+                              className="btn btn-primary btn-large"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M22 2L11 13"/>
+                                <polygon points="22,2 15,22 11,13 2,9"/>
+                              </svg>
+                              {isPublishing ? 'Publishing...' : 'Publish Post'}
+                            </button>
+                          </div>
+                        </div>
+                        {/* AI Generate Post History */}
+                        <div className="post-history">
+                          <div className="post-history-header">
+                            <h3>AI Generated Posts ({autoPostHistory.length})</h3>
+                            <button
+                              onClick={loadPostHistory}
+                              disabled={isLoadingPosts}
+                              className="btn btn-secondary btn-small"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M23 4v6h-6"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                              </svg>
+                              Refresh
+                            </button>
+                          </div>
+                          {isLoadingPosts ? (
+                            <div className="loading-posts">
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M21 12a9 9 0 11-6.219-8.56"/>
                               </svg>
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <circle cx="12" cy="12" r="10"/>
-                                <polyline points="12,6 12,12 16,14"/>
-                              </svg>
-                            )}
-                            {isTogglingSchedule 
-                              ? (scheduleData.isActive ? 'Deactivating...' : 'Activating...') 
-                              : (scheduleData.isActive ? 'Deactivate Schedule' : 'Activate Schedule')
-                            }
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Post History */}
-                  <div className="post-history">
-                    <div className="post-history-header">
-                      <h3>
-                        {activeTab === 'auto' && `AI Generated Posts (${autoPostHistory.length})`}
-                        {activeTab === 'manual' && `Manual Posts (${manualPostHistory.length})`}
-                        {activeTab === 'schedule' && `Scheduled Posts (${scheduleTotalCount})`}
-                      </h3>
-                      <button
-                        onClick={activeTab === 'schedule' ? () => loadScheduledPosts(1) : loadPostHistory}
-                        disabled={isLoadingPosts}
-                        className="btn btn-secondary btn-small"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M23 4v6h-6"/>
-                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-                        </svg>
-                        Refresh
-                      </button>
-                    </div>
-                    
-                    {isLoadingPosts ? (
-                      <div className="loading-posts">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                        </svg>
-                        Loading posts...
-                      </div>
-                    ) : getCurrentPostHistory().length > 0 ? (
-                      <>
-                        <div className="posts-list">
-                          {getCurrentPostHistory().map((post, index) => (
-                            <div key={index} className="post-item">
-                              <div className="post-content">
-                                {activeTab === 'schedule' ? (
-                                  // Special display for scheduled posts
-                                  <div className="scheduled-post-content">
-                                    <div className="schedule-info">
-                                      <span className="schedule-frequency">
-                                        {post.frequency} • {post.post_time}
-                                      </span>
-                                      <span className={`schedule-status ${post.is_active ? 'active' : 'inactive'}`}>
-                                        {post.is_active ? 'Active' : 'Inactive'}
-                                      </span>
-                                    </div>
-                                    <p className="schedule-prompt">{post.prompt}</p>
-                                    {post.next_execution && (
-                                      <div className="next-execution">
-                                        Next: {new Date(post.next_execution).toLocaleString()}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  // Regular post display
-                                  <>
+                              Loading posts...
+                            </div>
+                          ) : autoPostHistory.length > 0 ? (
+                            <div className="posts-list">
+                              {autoPostHistory.map((post, index) => (
+                                <div key={index} className="post-item">
+                                  <div className="post-content">
                                     <p>{post.content}</p>
                                     {post.media_urls && post.media_urls.length > 0 && (
                                       <div className="post-media">
                                         <img src={post.media_urls[0]} alt="Post media" className="post-image" />
                                       </div>
                                     )}
-                                  </>
-                                )}
-                              </div>
-                              <div className="post-meta">
-                                <span className="post-date">
-                                  {new Date(post.created_at || post.next_execution).toLocaleDateString()}
-                                </span>
-                                {activeTab !== 'schedule' && (
-                                  <span className={`post-status ${post.status}`}>
-                                    {post.status}
-                                  </span>
-                                )}
-                              </div>
+                                  </div>
+                                  <div className="post-meta">
+                                    <span className="post-date">
+                                      {new Date(post.created_at || post.next_execution).toLocaleDateString()}
+                                    </span>
+                                    <span className={`post-status ${post.status}`}>{post.status}</span>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          ) : (
+                            <div className="no-posts">
+                              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                              </svg>
+                              <p>No AI generated posts yet. Create your first post!</p>
+                            </div>
+                          )}
                         </div>
-                        
-                        {/* Pagination for scheduled posts */}
-                        {activeTab === 'schedule' && scheduleTotalPages > 1 && (
-                          <div className="pagination">
+                      </>
+                    )}
+                    {/* Manual Post Tab */}
+                    {activeTab === 'manual' && (
+                      <>
+                        <div className="manual-post-form">
+                          <h3>Manual Post</h3>
+                          
+                          {/* Message Input */}
+                          <div className="form-group">
+                            <label>Post Message</label>
+                            <textarea
+                              name="message"
+                              value={manualFormData.message}
+                              onChange={handleManualInputChange}
+                              placeholder="What's on your mind?"
+                              className="form-textarea"
+                              rows="4"
+                            />
+                          </div>
+
+                          {/* Media Options */}
+                          <div className="form-group">
+                            <label>Media Options</label>
+                            <div className="media-options">
+                              <button
+                                type="button"
+                                className={`media-option ${manualFormData.mediaType === 'none' ? 'active' : ''}`}
+                                onClick={() => handleMediaTypeChange('none', 'manual')}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                  <polyline points="14,2 14,8 20,8"/>
+                                  <line x1="16" y1="13" x2="8" y2="13"/>
+                                  <line x1="16" y1="17" x2="8" y2="17"/>
+                                  <polyline points="10,9 9,9 8,9"/>
+                                </svg>
+                                Text Only
+                              </button>
+                              <button
+                                type="button"
+                                className={`media-option ${manualFormData.mediaType === 'photo' ? 'active' : ''}`}
+                                onClick={() => handleMediaTypeChange('photo', 'manual')}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                                  <polyline points="21,15 16,10 5,21"/>
+                                </svg>
+                                Upload Photo
+                              </button>
+                              <button
+                                type="button"
+                                className={`media-option ${manualFormData.mediaType === 'video' ? 'active' : ''}`}
+                                onClick={() => handleMediaTypeChange('video', 'manual')}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <polygon points="23,7 16,12 23,17 23,7"/>
+                                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                                </svg>
+                                Upload Video
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Photo Upload */}
+                          {manualFormData.mediaType === 'photo' && (
+                            <div className="form-group">
+                              <label>Upload Photo</label>
+                              <input
+                                type="file"
+                                name="mediaFile"
+                                accept="image/*"
+                                onChange={handleManualInputChange}
+                                className="form-file-input"
+                              />
+                              {manualFormData.mediaFile && (
+                                <div className="image-preview">
+                                  <img 
+                                    src={URL.createObjectURL(manualFormData.mediaFile)} 
+                                    alt="Preview" 
+                                    className="preview-image"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Video Upload */}
+                          {manualFormData.mediaType === 'video' && (
+                            <div className="form-group">
+                              <label>Upload Video</label>
+                              <input
+                                type="file"
+                                name="mediaFile"
+                                accept="video/*"
+                                onChange={handleManualInputChange}
+                                className="form-file-input"
+                              />
+                              {manualFormData.mediaFile && (
+                                <div className="video-preview">
+                                  <video 
+                                    src={URL.createObjectURL(manualFormData.mediaFile)} 
+                                    controls
+                                    className="preview-video"
+                                    style={{ maxWidth: '100%', maxHeight: '300px' }}
+                                  />
+                                  <div className="video-info">
+                                    <p>File: {manualFormData.mediaFile.name}</p>
+                                    <p>Size: {(manualFormData.mediaFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Publish Button */}
+                          <div className="form-group">
                             <button
-                              onClick={() => loadScheduledPosts(schedulePage - 1)}
-                              disabled={schedulePage <= 1}
-                              className="btn btn-secondary btn-small"
+                              onClick={publishPost}
+                              disabled={!manualFormData.message.trim() || isPublishing}
+                              className="btn btn-primary btn-large"
                             >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <polyline points="15,18 9,12 15,6"/>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M22 2L11 13"/>
+                                <polygon points="22,2 15,22 11,13 2,9"/>
                               </svg>
-                              Previous
-                            </button>
-                            
-                            <span className="pagination-info">
-                              Page {schedulePage} of {scheduleTotalPages}
-                            </span>
-                            
-                            <button
-                              onClick={() => loadScheduledPosts(schedulePage + 1)}
-                              disabled={schedulePage >= scheduleTotalPages}
-                              className="btn btn-secondary btn-small"
-                            >
-                              Next
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <polyline points="9,18 15,12 9,6"/>
-                              </svg>
+                              {isPublishing ? 'Publishing...' : 'Publish Post'}
                             </button>
                           </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="no-posts">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                          {activeTab === 'schedule' ? (
-                            <circle cx="12" cy="12" r="10"/>
+                        </div>
+                        {/* Manual Post History */}
+                        <div className="post-history">
+                          <div className="post-history-header">
+                            <h3>Manual Posts ({manualPostHistory.length})</h3>
+                            <button
+                              onClick={loadPostHistory}
+                              disabled={isLoadingPosts}
+                              className="btn btn-secondary btn-small"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M23 4v6h-6"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                              </svg>
+                              Refresh
+                            </button>
+                          </div>
+                          {isLoadingPosts ? (
+                            <div className="loading-posts">
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                              </svg>
+                              Loading posts...
+                            </div>
+                          ) : manualPostHistory.length > 0 ? (
+                            <div className="posts-list">
+                              {manualPostHistory.map((post, index) => (
+                                <div key={index} className="post-item">
+                                  <div className="post-content">
+                                    <p>{post.content}</p>
+                                    {post.media_urls && post.media_urls.length > 0 && (
+                                      <div className="post-media">
+                                        <img src={post.media_urls[0]} alt="Post media" className="post-image" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="post-meta">
+                                    <span className="post-date">
+                                      {new Date(post.created_at || post.next_execution).toLocaleDateString()}
+                                    </span>
+                                    <span className={`post-status ${post.status}`}>{post.status}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           ) : (
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <div className="no-posts">
+                              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                              </svg>
+                              <p>No manual posts yet. Create your first post!</p>
+                            </div>
                           )}
-                        </svg>
-                        <p>
-                          {activeTab === 'schedule' 
-                            ? 'No scheduled posts yet. Create your first schedule!' 
-                            : 'No posts yet. Create your first post!'
-                          }
-                        </p>
-                      </div>
+                        </div>
+                      </>
+                    )}
+                    {/* Bulk Composer Tab */}
+                    {activeTab === 'bulk' && showBulkComposer && (
+                      <BulkComposer 
+                        selectedPage={selectedPage}
+                        onClose={() => {
+                          setShowBulkComposer(false);
+                          setActiveTab('auto');
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -2447,6 +2201,21 @@ function FacebookPage() {
                         </svg>
                         Not Available
                       </div>
+                    )}
+                    {googleDriveAvailable && (
+                      <button 
+                        className="disconnect-drive-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          disconnectGoogleDrive();
+                        }}
+                        title="Disconnect Google Drive"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <line x1="18" y1="6" x2="6" y2="18"/>
+                          <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
                     )}
                   </div>
                 </div>

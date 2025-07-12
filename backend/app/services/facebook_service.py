@@ -1,6 +1,7 @@
 import logging
 import httpx
 import os
+import aiohttp
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from app.config import get_settings
@@ -941,6 +942,184 @@ class FacebookService:
                             f"{self.graph_api_base}/{comment['id']}/comments",
                             data={"access_token": access_token, "message": reply_text}
                         )
+
+    async def post_bulk_to_facebook(self, posts_data, page_id, access_token):
+        """Post multiple posts to Facebook with proper media handling."""
+        results = []
+        
+        for post_data in posts_data:
+            try:
+                caption = post_data.get('caption', '')
+                media_file = post_data.get('media_file')
+                scheduled_time = post_data.get('scheduled_time')
+                
+                # Determine post type based on media presence
+                if media_file:
+                    # Photo post with media
+                    result = await self.post_photo_to_facebook(
+                        page_id=page_id,
+                        access_token=access_token,
+                        message=caption,
+                        image_data=media_file
+                    )
+                else:
+                    # Text-only feed post
+                    result = await self.post_text_to_facebook(
+                        page_id=page_id,
+                        access_token=access_token,
+                        message=caption
+                    )
+                
+                results.append({
+                    'success': True,
+                    'post_id': result.get('id'),
+                    'caption': caption,
+                    'post_type': 'photo' if media_file else 'feed'
+                })
+                
+            except Exception as e:
+                logger.error(f"Error posting to Facebook: {str(e)}")
+                results.append({
+                    'success': False,
+                    'error': str(e),
+                    'caption': post_data.get('caption', '')
+                })
+        
+        return results
+
+    async def post_photo_to_facebook(self, page_id, access_token, message, image_data):
+        """Post a photo to Facebook."""
+        try:
+            # Remove data URL prefix if present
+            if image_data.startswith('data:image'):
+                # Extract the base64 data
+                base64_data = image_data.split(',')[1]
+            else:
+                base64_data = image_data
+            
+            # Decode base64 to binary
+            import base64
+            image_binary = base64.b64decode(base64_data)
+            
+            # Create form data for multipart upload
+            import io
+            files = {
+                'source': ('image.jpg', io.BytesIO(image_binary), 'image/jpeg'),
+                'message': (None, message),
+                'access_token': (None, access_token)
+            }
+            
+            url = f"https://graph.facebook.com/v20.0/{page_id}/photos"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=files) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.info(f"Successfully posted photo to Facebook: {result.get('id')}")
+                        return result
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Facebook photo post failed: {response.status} - {error_text}")
+                        raise Exception(f"Facebook API error: {response.status} - {error_text}")
+                        
+        except Exception as e:
+            logger.error(f"Error posting photo to Facebook: {str(e)}")
+            raise
+
+    async def post_text_to_facebook(self, page_id, access_token, message):
+        """Post text-only content to Facebook feed."""
+        try:
+            url = f"https://graph.facebook.com/v20.0/{page_id}/feed"
+            
+            data = {
+                'message': message,
+                'access_token': access_token
+            }
+            
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=data) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.info(f"Successfully posted text to Facebook: {result.get('id')}")
+                        return result
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Facebook text post failed: {response.status} - {error_text}")
+                        raise Exception(f"Facebook API error: {response.status} - {error_text}")
+                        
+        except Exception as e:
+            logger.error(f"Error posting text to Facebook: {str(e)}")
+            raise
+
+    async def get_page_conversations(self, page_id: str, access_token: str) -> List[Dict[str, Any]]:
+        """
+        Fetch all conversations for a Facebook Page.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.graph_api_base}/{page_id}/conversations",
+                    params={
+                        "access_token": access_token,
+                        "fields": "id,updated_time,senders,unread_count"
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("data", [])
+                else:
+                    logger.error(f"Failed to fetch conversations: {response.text}")
+                    return []
+        except Exception as e:
+            logger.error(f"Error fetching conversations: {e}")
+            return []
+
+    async def get_conversation_messages(self, conversation_id: str, access_token: str) -> List[Dict[str, Any]]:
+        """
+        Fetch messages in a conversation.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.graph_api_base}/{conversation_id}/messages",
+                    params={
+                        "access_token": access_token,
+                        "fields": "id,from,message,created_time,to"
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("data", [])
+                else:
+                    logger.error(f"Failed to fetch messages: {response.text}")
+                    return []
+        except Exception as e:
+            logger.error(f"Error fetching messages: {e}")
+            return []
+
+    async def send_message_reply(self, conversation_id: str, access_token: str, message: str) -> bool:
+        """
+        Send a reply to a conversation (Page message).
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.graph_api_base}/{conversation_id}/messages",
+                    data={
+                        "access_token": access_token,
+                        "message": message
+                    }
+                )
+                if response.status_code == 200:
+                    logger.info(f"Successfully sent message reply to conversation {conversation_id}")
+                    return True
+                else:
+                    logger.error(f"Failed to send message reply: {response.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error sending message reply: {e}")
+            return False
 
 
 # Create a singleton instance

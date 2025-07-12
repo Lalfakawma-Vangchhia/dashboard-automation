@@ -1703,6 +1703,36 @@
   color: #cbd5e0;
 }
 
+.disconnect-drive-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+  z-index: 10;
+}
+
+.disconnect-drive-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+  background: #ef4444;
+}
+
+.disconnect-drive-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Responsive File Picker */
 @media (max-width: 768px) {
   .file-picker-options {

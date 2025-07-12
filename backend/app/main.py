@@ -4,9 +4,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from app.config import get_settings
-from app.database import create_tables
+from app.database import init_db, verify_db_connection
 from app.api import auth, social_media, ai, google_drive
-from app.services.scheduler_service import scheduler_service
 import logging
 import asyncio
 import os
@@ -60,20 +59,45 @@ async def startup_event():
     logger.info("Starting Automation Dashboard API...")
     
     try:
-        # Create database tables
-        create_tables()
-        logger.info("Database tables created/verified")
+        # Initialize database models (for Alembic compatibility)
+        init_db()
+        logger.info("Database models registered")
+        
+        # Verify database connection
+        verify_db_connection()
+        logger.info("Database connection verified")
+        
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         # Don't fail startup for database issues
     
-    # Start scheduler service for automatic post scheduling
-    try:
-        asyncio.create_task(scheduler_service.start())
-        logger.info("Scheduler service started for automatic posts")
-    except Exception as e:
-        logger.error(f"Failed to start scheduler service: {e}")
+
     
+    # Start bulk composer scheduler for scheduled posts
+    try:
+        from app.services.bulk_composer_scheduler import bulk_composer_scheduler
+        asyncio.create_task(bulk_composer_scheduler.start())
+        logger.info("Bulk composer scheduler started for scheduled posts")
+    except Exception as e:
+        logger.error(f"Failed to start bulk composer scheduler: {e}")
+
+    # Start auto-reply scheduler for Facebook comments
+    try:
+        from app.services.auto_reply_service import auto_reply_service
+        from app.database import get_db
+        async def auto_reply_scheduler():
+            while True:
+                try:
+                    db = next(get_db())
+                    await auto_reply_service.process_auto_replies(db)
+                except Exception as e:
+                    logger.error(f"Error in auto-reply scheduler: {e}")
+                await asyncio.sleep(60)  
+        asyncio.create_task(auto_reply_scheduler())
+        logger.info("Auto-reply scheduler started for Facebook comments")
+    except Exception as e:
+        logger.error(f"Failed to start auto-reply scheduler: {e}")
+
     logger.info("Automation Dashboard API started successfully")
 
 
@@ -82,12 +106,15 @@ async def shutdown_event():
     """Clean up resources."""
     logger.info("Shutting down Automation Dashboard API...")
     
-    # Stop scheduler service
+
+    
+    # Stop bulk composer scheduler
     try:
-        scheduler_service.stop()
-        logger.info("Scheduler service stopped")
+        from app.services.bulk_composer_scheduler import bulk_composer_scheduler
+        bulk_composer_scheduler.stop()
+        logger.info("Bulk composer scheduler stopped")
     except Exception as e:
-        logger.error(f"Error stopping scheduler service: {e}")
+        logger.error(f"Error stopping bulk composer scheduler: {e}")
 
 
 # Health check endpoint
@@ -118,6 +145,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(social_media.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(google_drive.router)
+
 
 
 # Error handlers

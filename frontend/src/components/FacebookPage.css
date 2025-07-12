@@ -1288,6 +1288,36 @@
   margin-top: 0.5rem;
 }
 
+.disconnect-drive-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--danger-color);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+  z-index: 10;
+}
+
+.disconnect-drive-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+  background: var(--danger-color);
+}
+
+.disconnect-drive-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
 @media (max-width: 768px) {
   .modal-content {
     margin: 1rem;

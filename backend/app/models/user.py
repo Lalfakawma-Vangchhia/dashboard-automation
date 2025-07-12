@@ -26,7 +26,8 @@ class User(Base):
     social_accounts = relationship("SocialAccount", back_populates="user")
     posts = relationship("Post", back_populates="user")
     automation_rules = relationship("AutomationRule", back_populates="user")
-    scheduled_posts = relationship("ScheduledPost", back_populates="user")
+
+    bulk_composer_content = relationship("BulkComposerContent", back_populates="user")
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', username='{self.username}')>" 

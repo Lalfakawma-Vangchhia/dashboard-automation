@@ -35,9 +35,6 @@ class ApiClient {
     };
 
     try {
-      console.log(`🔍 DEBUG: baseURL = ${this.baseURL}`);
-      console.log(`🔍 DEBUG: endpoint = ${endpoint}`);
-      console.log(`🔍 DEBUG: final URL = ${url}`);
       console.log(`Making API request to: ${url}`);
       
       // Dynamic timeout – longer for AI image endpoints which can take ~30-60 s
@@ -229,47 +226,7 @@ class ApiClient {
     });
   }
 
-  // Scheduling endpoints
-  async createScheduledPost(scheduleData) {
-    // Validate required fields
-    if (!scheduleData.social_account_id) {
-      throw new Error('Social account ID is required for scheduling posts');
-    }
-    
-    const params = new URLSearchParams({
-      prompt: scheduleData.prompt,
-      post_time: scheduleData.post_time,
-      frequency: scheduleData.frequency || 'daily',
-      social_account_id: scheduleData.social_account_id.toString()
-    });
-    
-    return this.request(`/api/social/scheduled-posts?${params.toString()}`, {
-      method: 'POST',
-    });
-  }
-
-  async getScheduledPosts() {
-    return this.request('/api/social/scheduled-posts');
-  }
-
-  async updateScheduledPost(scheduleId, scheduleData) {
-    return this.request(`/api/social/scheduled-posts/${scheduleId}`, {
-      method: 'PUT',
-      body: JSON.stringify(scheduleData),
-    });
-  }
-
-  async deleteScheduledPost(scheduleId) {
-    return this.request(`/api/social/scheduled-posts/${scheduleId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async deactivateScheduledPost(scheduleId) {
-    return this.request(`/api/social/scheduled-posts/${scheduleId}/deactivate`, {
-      method: 'PUT',
-    });
-  }
+  // (No scheduled post methods here anymore)
 
   async getSocialPosts(platform = null, limit = 50) {
     const params = new URLSearchParams();
@@ -518,10 +475,16 @@ class ApiClient {
   }
 
   async getGoogleDriveToken() {
-    const response = await this.request('/api/google-drive/auth');
+    const response = await this.request('/api/google-drive/token');
     return {
       access_token: response.access_token
     };
+  }
+
+  async disconnectGoogleDrive() {
+    return this.request('/api/google-drive/disconnect', {
+      method: 'POST'
+    });
   }
 
   // Generate Instagram image using Stability AI
@@ -649,16 +612,61 @@ class ApiClient {
     });
   }
 
-  // Generate Instagram caption specifically
   async generateInstagramCaption(prompt) {
     try {
+      console.log('Generating Instagram caption with prompt:', prompt);
+      
       const response = await this.request('/api/social/instagram/generate-caption', {
         method: 'POST',
         body: JSON.stringify({ prompt })
       });
+      
+      console.log('Instagram caption generation response:', response);
       return response;
     } catch (error) {
       console.error('Error generating Instagram caption:', error);
+      throw error;
+    }
+  }
+
+  async generateCaptionWithStrategy(customStrategy, context = "", maxLength = 2000) {
+    try {
+      console.log('Generating caption with custom strategy:', { customStrategy, context, maxLength });
+      
+      const response = await this.request('/api/social/generate-caption-with-strategy', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          custom_strategy: customStrategy,
+          context: context,
+          max_length: maxLength
+        })
+      });
+      
+      console.log('Custom strategy caption generation response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error generating caption with custom strategy:', error);
+      throw error;
+    }
+  }
+
+  async generateBulkCaptions(customStrategy, contexts, maxLength = 2000) {
+    try {
+      console.log('Generating bulk captions with custom strategy:', { customStrategy, contexts, maxLength });
+      
+      const response = await this.request('/api/social/generate-bulk-captions', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          custom_strategy: customStrategy,
+          contexts: contexts,
+          max_length: maxLength
+        })
+      });
+      
+      console.log('Bulk caption generation response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error generating bulk captions:', error);
       throw error;
     }
   }
@@ -762,6 +770,74 @@ class ApiClient {
         message: message
       }),
     });
+  }
+
+  // Bulk Composer - Schedule multiple posts
+  async bulkSchedulePosts(requestData) {
+    try {
+      console.log('Scheduling bulk posts:', requestData);
+      
+      const response = await this.request('/api/social/bulk-composer/schedule', {
+        method: 'POST',
+        body: JSON.stringify(requestData)
+      });
+      
+      console.log('Bulk schedule response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error scheduling bulk posts:', error);
+      throw error;
+    }
+  }
+
+  // Bulk Composer - Get scheduled posts
+  async getBulkComposerContent() {
+    try {
+      console.log('Getting bulk composer content...');
+      
+      const response = await this.request('/api/social/bulk-composer/content');
+      
+      console.log('Bulk composer content response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error getting bulk composer content:', error);
+      throw error;
+    }
+  }
+
+  // Bulk Composer - Update post caption
+  async updateBulkComposerPost(postId, caption) {
+    try {
+      console.log('Updating bulk composer post:', postId, caption);
+      
+      const response = await this.request(`/api/social/bulk-composer/content/${postId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ caption })
+      });
+      
+      console.log('Update post response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error updating bulk composer post:', error);
+      throw error;
+    }
+  }
+
+  // Bulk Composer - Cancel/delete scheduled post
+  async cancelBulkComposerPost(postId) {
+    try {
+      console.log('Canceling bulk composer post:', postId);
+      
+      const response = await this.request(`/api/social/bulk-composer/content/${postId}`, {
+        method: 'DELETE'
+      });
+      
+      console.log('Cancel post response:', response);
+      return response;
+    } catch (error) {
+      console.error('Error canceling bulk composer post:', error);
+      throw error;
+    }
   }
 }
 

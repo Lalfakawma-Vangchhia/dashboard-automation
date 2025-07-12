@@ -472,4 +472,91 @@ async def oauth2callback(request: FastAPIRequest):
                 </script>
                 <p>Authentication failed: {str(e)}. You may close this window.</p>
             </body></html>
-        """) 
+        """)
+
+@router.post("/disconnect")
+async def disconnect_google_drive(current_user: User = Depends(get_current_user)):
+    """Disconnect Google Drive by removing stored credentials."""
+    try:
+        # Remove token.json file if it exists
+        if os.path.exists("token.json"):
+            os.remove("token.json")
+            logger.info("Removed token.json file")
+        
+        # Clear environment variables (if they were set)
+        # Note: This won't affect the current process, but will be cleared for new processes
+        if hasattr(settings, 'google_drive_access_token'):
+            settings.google_drive_access_token = None
+        if hasattr(settings, 'google_drive_refresh_token'):
+            settings.google_drive_refresh_token = None
+        
+        return {
+            "success": True,
+            "message": "Google Drive disconnected successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error disconnecting Google Drive: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to disconnect Google Drive: {str(e)}"
+        )
+
+@router.get("/token")
+async def get_google_drive_token(current_user: User = Depends(get_current_user)):
+    """Get a fresh access token for Google Drive API."""
+    try:
+        service = get_google_drive_service()
+        
+        # Get the current credentials
+        creds = None
+        if settings.google_drive_access_token and settings.google_drive_refresh_token:
+            try:
+                creds = Credentials(
+                    token=settings.google_drive_access_token,
+                    refresh_token=settings.google_drive_refresh_token,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    client_id=settings.google_drive_client_id,
+                    client_secret=settings.google_drive_client_secret,
+                    scopes=SCOPES
+                )
+            except Exception:
+                creds = None
+        
+        if not creds and os.path.exists("token.json"):
+            try:
+                creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+            except Exception:
+                creds = None
+        
+        if not creds:
+            raise HTTPException(
+                status_code=401,
+                detail="Google Drive not authenticated"
+            )
+        
+        # Refresh token if needed
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                # Save updated credentials
+                with open("token.json", 'w') as token:
+                    token.write(creds.to_json())
+            except Exception as e:
+                logger.error(f"Failed to refresh token: {e}")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Failed to refresh Google Drive token"
+                )
+        
+        return {
+            "success": True,
+            "access_token": creds.token,
+            "token_type": "Bearer",
+            "expires_in": 3600  # Google tokens typically expire in 1 hour
+        }
+    except Exception as e:
+        logger.error(f"Error getting Google Drive token: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Google Drive token: {str(e)}"
+        ) 

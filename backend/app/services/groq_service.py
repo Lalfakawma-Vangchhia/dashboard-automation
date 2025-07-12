@@ -85,7 +85,7 @@ class GroqService:
                 "model_used": "fallback",
                 "tokens_used": 0,
                 "success": False,
-                "error": str(e)
+                "error": str(e) 
             }
     
     def _get_facebook_system_prompt(self, content_type: str, max_length: int) -> str:
@@ -104,6 +104,8 @@ Guidelines:
 - Avoid corporate or robotic language
 - No hashtags unless specifically requested
 - Start directly with the content, no introductions
+- Start with capital letter
+- End with period
 
 """
         
@@ -273,6 +275,85 @@ Create a complete Instagram caption that includes the main content and relevant 
             logger.error(f"Error generating Instagram content with Groq: {e}")
             return {
                 "content": f"✨ Excited to share this amazing moment! {prompt} ✨\n\n#instagram #socialmedia #content #amazing #life #photography #beautiful #inspiration #daily #mood",
+                "model_used": "fallback",
+                "tokens_used": 0,
+                "success": False,
+                "error": str(e)
+            }
+
+    async def generate_caption_with_custom_strategy(
+        self,
+        custom_strategy: str,
+        context: str = "",
+        max_length: int = 2000
+    ) -> Dict[str, Any]:
+        """
+        Generate caption using a custom strategy template.
+        
+        Args:
+            custom_strategy: The custom strategy template provided by the user
+            context: Additional context or topic for the caption
+            max_length: Maximum character length for the caption
+            
+        Returns:
+            Dict containing generated content and metadata
+        """
+        if not self.client:
+            raise Exception("Groq client not initialized. Please check your API key configuration.")
+        
+        try:
+            # Construct system prompt using the custom strategy
+            system_prompt = f"""You are a professional social media content creator.
+
+Your task is to create engaging social media captions based on the user's custom strategy template.
+
+Custom Strategy Template:
+{custom_strategy}
+
+Guidelines:
+- Keep content under {max_length} characters
+- Follow the custom strategy template provided
+- Use a conversational, authentic tone
+- Include relevant emojis naturally
+- Make it engaging and shareable
+- Create content that encourages interaction
+- Be creative while staying true to the strategy
+
+Generate a caption that follows the custom strategy template."""
+
+            # Create the user prompt with context
+            user_prompt = f"Create a social media caption for: {context}" if context else "Create a social media caption following the custom strategy."
+
+            # Generate content using Groq
+            completion = self.client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=500,
+                temperature=0.7,
+                top_p=0.9,
+                stream=False
+            )
+            
+            generated_content = completion.choices[0].message.content.strip()
+            
+            # Validate content length
+            if len(generated_content) > max_length:
+                generated_content = generated_content[:max_length-3] + "..."
+            
+            return {
+                "content": generated_content,
+                "model_used": "llama-3.1-8b-instant",
+                "tokens_used": completion.usage.total_tokens if completion.usage else 0,
+                "success": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating caption with custom strategy: {e}")
+            return {
+                "content": f"Excited to share this amazing content! {context} ✨",
                 "model_used": "fallback",
                 "tokens_used": 0,
                 "success": False,

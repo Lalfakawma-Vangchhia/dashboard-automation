@@ -89,7 +89,7 @@ class InstagramAutoReplyService:
             logger.info(f"⏰ Last check: {last_check}, checking comments since then")
             
             # Get page access token from platform_data
-            page_access_token = social_account.platform_data.get("page_access_token")
+            page_access_token = social_account.access_token
             if not page_access_token:
                 logger.error(f"❌ No page access token found for Instagram account {social_account.id}")
                 return
@@ -362,14 +362,7 @@ class InstagramAutoReplyService:
         self._replied_comments[comment_id] = datetime.utcnow()
         logger.info(f"Marked comment {comment_id} as replied at {datetime.utcnow()}")
     
-    def reset_replied_comments_cache(self):
-        """Reset the replied comments cache for testing purposes."""
-        if hasattr(self, '_replied_comments'):
-            self._replied_comments.clear()
-            logger.info("🧹 Reset replied comments cache")
-        else:
-            self._replied_comments = {}
-            logger.info("🧹 Initialized empty replied comments cache")
+
     
     async def _generate_and_post_reply(
         self, 

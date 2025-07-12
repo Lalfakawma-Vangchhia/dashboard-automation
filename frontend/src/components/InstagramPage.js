@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,7 +30,6 @@ const InstagramPage = () => {
   const [imageSource, setImageSource] = useState('ai'); // ai | upload | drive
   const [uploadedImageUrl, setUploadedImageUrl] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [selectedImageFile, setSelectedImageFile] = useState(null);
   const [autoGenerateCaption, setAutoGenerateCaption] = useState(false);
   const [captionPrompt, setCaptionPrompt] = useState('');
   const [generatingCaption, setGeneratingCaption] = useState(false);
@@ -38,13 +37,11 @@ const InstagramPage = () => {
 
   // Carousel State
   const [carouselImages, setCarouselImages] = useState([]); // URLs
-  const [carouselFiles, setCarouselFiles] = useState([]); // File objects
   const [carouselCount, setCarouselCount] = useState(3);
   const [carouselCaption, setCarouselCaption] = useState('');
   const [carouselGenerating, setCarouselGenerating] = useState(false);
 
   // Reel State
-  const [reelFile, setReelFile] = useState(null);
   const [reelUrl, setReelUrl] = useState('');
   const [reelFilename, setReelFilename] = useState('');
   const [reelCaption, setReelCaption] = useState('');
@@ -53,7 +50,6 @@ const InstagramPage = () => {
   const [reelCaptionPrompt, setReelCaptionPrompt] = useState('');
   const [generatingReelCaption, setGeneratingReelCaption] = useState(false);
   // Thumbnail State for Reel
-  const [reelThumbnailFile, setReelThumbnailFile] = useState(null);
   const [reelThumbnailUrl, setReelThumbnailUrl] = useState('');
   const [reelThumbnailFilename, setReelThumbnailFilename] = useState('');
 
@@ -92,7 +88,7 @@ const InstagramPage = () => {
 
 
   // --- Facebook SDK Helpers ---
-    const checkLoginStatus = () => {
+    const checkLoginStatus = useCallback(() => {
       if (!window.FB || !isAuthenticated) return;
       window.FB.getLoginStatus((response) => {
         if (response.status === 'connected') {
@@ -103,8 +99,8 @@ const InstagramPage = () => {
           setMessage('Instagram: Please connect your Facebook account to continue');
         }
       });
-    };
-    const initializeFacebookSDK = () => {
+    }, [isAuthenticated, handleConnectInstagram]);
+    const initializeFacebookSDK = useCallback(() => {
       if (window.FB) {
       window.FB.init({ appId: INSTAGRAM_APP_ID, cookie: true, xfbml: true, version: 'v18.0' });
         setSdkLoaded(true);
@@ -123,7 +119,7 @@ const InstagramPage = () => {
         js.src = "https://connect.facebook.net/en_US/sdk.js";
         fjs.parentNode.insertBefore(js, fjs);
       }(document, 'script', 'facebook-jssdk'));
-    };
+    }, [checkLoginStatus]);
 
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
@@ -131,7 +127,7 @@ const InstagramPage = () => {
     initializeFacebookSDK();
       checkGoogleDriveAvailability();
     }
-  }, [isAuthenticated, authLoading]);
+  }, [isAuthenticated, authLoading, checkLoginStatus, initializeFacebookSDK, checkGoogleDriveAvailability]);
 
   useEffect(() => {
     checkLoginStatus();
@@ -239,7 +235,6 @@ const InstagramPage = () => {
       if (res && res.success && res.data && res.data.url) {
         setUploadedImageUrl(res.data.url);
         setAiImageUrl(res.data.url);
-        setSelectedImageFile(file);
         setMessage('Image uploaded successfully!');
       } else {
         throw new Error(res?.error || 'Upload failed');
@@ -577,13 +572,11 @@ const InstagramPage = () => {
         const filename = res.filename || res.data?.filename;
         setReelUrl(videoUrl);
         setReelFilename(filename || ''); // Store the filename for file-based posting
-        setReelFile(file);
         setMessage('Video uploaded successfully!');
       } else if (res && res.data && res.data.url) {
         // Alternative response structure
         setReelUrl(res.data.url);
         setReelFilename(res.data.filename || '');
-        setReelFile(file);
         setMessage('Video uploaded successfully!');
       } else {
         throw new Error(res?.error || res?.message || 'Upload failed');
@@ -637,7 +630,6 @@ const InstagramPage = () => {
         const filename = res.filename || res.data?.filename;
         setReelThumbnailUrl(imageUrl);
         setReelThumbnailFilename(filename || '');
-        setReelThumbnailFile(file);
         setMessage('Thumbnail uploaded successfully!');
       } else {
         throw new Error(res?.error || res?.message || 'Thumbnail upload failed');
@@ -647,16 +639,17 @@ const InstagramPage = () => {
     }
   };
 
-  // --- Google Drive Integration ---
-  const checkGoogleDriveAuth = async () => {
+
+
+  const disconnectGoogleDrive = async () => {
     try {
-      const response = await apiClient.getGoogleDriveStatus();
-      setDriveAuthenticated(response.authenticated);
-      return response.authenticated;
-    } catch (error) {
-      console.error('Error checking Google Drive auth:', error);
+      await apiClient.disconnectGoogleDrive();
       setDriveAuthenticated(false);
-      return false;
+      setGoogleDriveAvailable(false);
+      setMessage('Google Drive disconnected successfully!');
+    } catch (error) {
+      console.error('Error disconnecting Google Drive:', error);
+      setMessage(`Failed to disconnect Google Drive: ${error.message}`);
     }
   };
 
@@ -754,15 +747,7 @@ const InstagramPage = () => {
     }
   };
 
-  const openDriveModal = async () => {
-    const isAuth = await checkGoogleDriveAuth();
-    if (!isAuth) {
-      await authenticateGoogleDrive();
-    } else {
-      await loadDriveFiles();
-    }
-    setShowDriveModal(true);
-  };
+
 
   // File Picker Functions
   const openFilePicker = (type, formType) => {
@@ -829,7 +814,7 @@ const InstagramPage = () => {
       }
       
       // Get fresh token for picker
-      const authResult = await apiClient.getGoogleDriveAuth();
+      await apiClient.getGoogleDriveAuth();
       
       // Open Google Drive picker
       const picker = new window.google.picker.PickerBuilder()
@@ -837,7 +822,7 @@ const InstagramPage = () => {
           .setIncludeFolders(true)
           .setSelectFolderEnabled(false)
           .setMimeTypes(filePickerType === 'photo' ? 'image/*' : 'video/*'))
-        .setOAuthToken(authResult.access_token)
+        // .setOAuthToken(authResult.access_token) // Removed to prevent Facebook SDK conflicts
         .setDeveloperKey(process.env.REACT_APP_GOOGLE_DEVELOPER_KEY || '')
         .setCallback(handleGoogleDriveCallback)
         .enableFeature(window.google.picker.Feature.NAV_HIDDEN)
@@ -1120,13 +1105,10 @@ const InstagramPage = () => {
         setUploadedImageUrl('');
         setReelUrl('');
         setReelFilename(''); // Clear the filename too
-        setReelFile(null);
-        setSelectedImageFile(null);
         setAiPrompt('');
         setCaptionPrompt('');
         setReelThumbnailUrl('');
         setReelThumbnailFilename('');
-        setReelThumbnailFile(null);
         // Reload user media
         if (selectedAccount) {
           loadUserMedia(selectedAccount.platform_user_id);
@@ -1148,7 +1130,7 @@ const InstagramPage = () => {
   };
 
   // Check Google Drive availability
-  const checkGoogleDriveAvailability = async () => {
+  const checkGoogleDriveAvailability = useCallback(async () => {
     try {
       const status = await apiClient.getGoogleDriveStatus();
       setGoogleDriveAvailable(status.authenticated);
@@ -1156,7 +1138,7 @@ const InstagramPage = () => {
       console.error('Error checking Google Drive availability:', error);
       setGoogleDriveAvailable(false);
     }
-  };
+  }, []);
 
   // --- Logout ---
   const handleLogout = () => {
@@ -1168,7 +1150,7 @@ const InstagramPage = () => {
   };
 
   // Auto-Reply Functions
-  const loadAutoReplySettings = async () => {
+  const loadAutoReplySettings = useCallback(async () => {
     if (!selectedAccount) return;
     
     try {
@@ -1185,7 +1167,7 @@ const InstagramPage = () => {
       }
       
       // Get automation rules for Instagram auto-reply
-      const rules = await apiClient.getAutomationRules('instagram', 'auto_reply');
+      const rules = await apiClient.getAutomationRules('instagram', 'AUTO_REPLY');
       console.log('📋 Found automation rules:', rules);
       
       // Get social accounts to match with the selected account
@@ -1230,7 +1212,7 @@ const InstagramPage = () => {
       
       setMessage(errorMessage);
     }
-  };
+  }, [selectedAccount]);
 
   const loadPostsForAutoReply = async () => {
     if (!selectedAccount) return;
@@ -1476,7 +1458,7 @@ const InstagramPage = () => {
       console.log('🔍 DEBUG: Loading auto-reply settings');
       loadAutoReplySettings();
     }
-  }, [selectedAccount, activeTab]);
+  }, [selectedAccount, activeTab, loadAutoReplySettings]);
 
   // Persist auto-reply state on page refresh
   useEffect(() => {
@@ -1484,7 +1466,7 @@ const InstagramPage = () => {
       // Re-validate auto-reply state with backend
       const validateAutoReplyState = async () => {
         try {
-          const rules = await apiClient.getAutomationRules('instagram', 'auto_reply');
+          const rules = await apiClient.getAutomationRules('instagram', 'AUTO_REPLY');
           const socialAccounts = await apiClient.getSocialAccounts();
           const instagramAccount = socialAccounts.find(acc => 
             acc.platform === 'instagram' && acc.platform_user_id === selectedAccount.platform_user_id
@@ -2367,6 +2349,21 @@ const InstagramPage = () => {
                         Not Available
             </div>
           )}
+                    {googleDriveAvailable && (
+                      <button 
+                        className="disconnect-drive-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          disconnectGoogleDrive();
+                        }}
+                        title="Disconnect Google Drive"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <line x1="18" y1="6" x2="6" y2="18"/>
+                          <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    )}
         </div>
       </div>
               </div>

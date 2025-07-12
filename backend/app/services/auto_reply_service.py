@@ -5,9 +5,10 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule, RuleType
 from app.models.social_account import SocialAccount
-from app.models.post import Post
+from app.models.post import Post, PostStatus
 from app.services.facebook_service import facebook_service
 from app.services.groq_service import groq_service
+from app.services.facebook_message_auto_reply_service import facebook_message_auto_reply_service
 
 logger = logging.getLogger(__name__)
 
@@ -24,27 +25,36 @@ class AutoReplyService:
         This should be called periodically (e.g., every 5 minutes).
         """
         try:
-            # Get all active auto-reply rules
+            # Get all active auto-reply rules (comments)
             auto_reply_rules = db.query(AutomationRule).filter(
                 AutomationRule.rule_type == RuleType.AUTO_REPLY,
                 AutomationRule.is_active == True
             ).all()
-            
-            logger.info(f"🔄 Processing auto-replies for {len(auto_reply_rules)} active rules")
-            
-            if not auto_reply_rules:
+            # Get all active auto-reply message rules
+            auto_reply_msg_rules = db.query(AutomationRule).filter(
+                AutomationRule.rule_type == RuleType.AUTO_REPLY_MESSAGE,
+                AutomationRule.is_active == True
+            ).all()
+            logger.info(f"🔄 Processing auto-replies for {len(auto_reply_rules)} comment rules and {len(auto_reply_msg_rules)} message rules")
+            if not auto_reply_rules and not auto_reply_msg_rules:
                 logger.info("📭 No active auto-reply rules found")
                 return
-            
+            # Process comment auto-replies
             for rule in auto_reply_rules:
                 try:
                     logger.info(f"🎯 Processing auto-reply rule {rule.id} for account {rule.social_account_id}")
                     await self._process_rule_auto_replies(rule, db)
                 except Exception as e:
                     logger.error(f"❌ Error processing auto-reply rule {rule.id}: {e}")
-                    # Continue with other rules even if one fails
                     continue
-                    
+            # Process message auto-replies
+            for rule in auto_reply_msg_rules:
+                try:
+                    logger.info(f"🎯 Processing auto-reply MESSAGE rule {rule.id} for account {rule.social_account_id}")
+                    await self._process_rule_auto_reply_messages(rule, db)
+                except Exception as e:
+                    logger.error(f"❌ Error processing auto-reply MESSAGE rule {rule.id}: {e}")
+                    continue
         except Exception as e:
             logger.error(f"❌ Error in process_auto_replies: {e}")
     
@@ -62,21 +72,39 @@ class AutoReplyService:
             
             logger.info(f"✅ Found connected social account: {social_account.display_name}")
             
-            # Get selected post IDs from the rule
-            selected_post_ids = rule.actions.get("selected_facebook_post_ids", [])
-            logger.info(f"🔍 Rule actions: {rule.actions}")
-            logger.info(f"🔍 Selected Facebook post IDs: {selected_post_ids}")
+            # Fetch all posts from Facebook for this page
+            async with httpx.AsyncClient() as client:
+                fb_posts_resp = await client.get(
+                    f"{self.graph_api_base}/{social_account.platform_user_id}/posts",
+                    params={
+                        "access_token": social_account.access_token,
+                        "fields": "id",
+                        "limit": 100  # adjust as needed
+                    }
+                )
+                if fb_posts_resp.status_code == 200:
+                    fb_posts_data = fb_posts_resp.json()
+                    selected_post_ids = [p["id"] for p in fb_posts_data.get("data", [])]
+                    logger.info(f"Found {len(selected_post_ids)} posts for page {social_account.platform_user_id} (from Facebook API)")
+                else:
+                    logger.error(f"Failed to fetch posts from Facebook: {fb_posts_resp.text}")
+                    selected_post_ids = []
             
+            # If selected_post_ids is empty, process all posts for this page
             if not selected_post_ids:
-                logger.info(f"📭 No selected posts for rule {rule.id}")
-                return
-            
-            logger.info(f"📋 Processing {len(selected_post_ids)} selected posts for auto-reply")
-            
+                logger.info(f"No specific posts selected for rule {rule.id}, processing all posts for this page.")
+                # Fetch all published/scheduled posts for this social account
+                posts = db.query(Post).filter(
+                    Post.social_account_id == social_account.id,
+                    Post.status.in_([PostStatus.PUBLISHED, PostStatus.SCHEDULED])
+                ).all()
+                selected_post_ids = [post.platform_post_id for post in posts if post.platform_post_id]
+                logger.info(f"Found {len(selected_post_ids)} posts for page {social_account.platform_user_id}")
+            else:
+                logger.info(f"📋 Processing {len(selected_post_ids)} selected posts for auto-reply")
             # Get the last check time for this rule
             last_check = rule.last_execution_at or (datetime.utcnow() - timedelta(minutes=10))
             logger.info(f"⏰ Last check: {last_check}, checking comments since then")
-            
             # Process comments for each selected post
             for post_id in selected_post_ids:
                 logger.info(f"📝 Processing comments for post: {post_id}")
@@ -516,6 +544,27 @@ class AutoReplyService:
         except Exception as e:
             logger.error(f"Error getting conversation context: {e}")
             return ""
+
+    async def _process_rule_auto_reply_messages(self, rule: AutomationRule, db: Session):
+        """Process auto-replies for Facebook Page messages (inbox) using the new conversational AI service."""
+        try:
+            # Get the social account
+            social_account = db.query(SocialAccount).filter(
+                SocialAccount.id == rule.social_account_id
+            ).first()
+            if not social_account or not social_account.is_connected:
+                logger.warning(f"⚠️ Social account {rule.social_account_id} not found or not connected")
+                return
+            logger.info(f"✅ Found connected social account: {social_account.display_name}")
+            
+            # Use the new conversational AI service for message auto-reply
+            await facebook_message_auto_reply_service.process_page_messages(
+                social_account.platform_user_id, 
+                social_account.access_token, 
+                rule
+            )
+        except Exception as e:
+            logger.error(f"Error processing auto-reply messages for rule {rule.id}: {e}")
 
 
 # Create a singleton instance

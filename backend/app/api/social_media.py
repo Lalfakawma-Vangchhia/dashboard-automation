@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
@@ -7,28 +7,28 @@ from app.models.user import User
 from app.models.social_account import SocialAccount
 from app.models.post import Post, PostStatus, PostType
 from app.models.automation_rule import AutomationRule, RuleType, TriggerType
-from app.models.scheduled_post import ScheduledPost, FrequencyType
+from app.models.bulk_composer_content import BulkComposerContent, BulkComposerStatus
 from app.schemas.social_media import (
     SocialAccountResponse, PostCreate, PostResponse, PostUpdate,
     AutomationRuleCreate, AutomationRuleResponse, AutomationRuleUpdate,
     FacebookConnectRequest, FacebookPostRequest, AutoReplyToggleRequest,
-    InstagramConnectRequest, InstagramPostRequest, InstagramAccountInfo,
-    InstagramAutoReplyToggleRequest, SuccessResponse, ErrorResponse
+    InstagramConnectRequest, InstagramPostRequest,
+    InstagramAutoReplyToggleRequest, SuccessResponse
 )
-from pydantic import BaseModel, Field, validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 import logging
 from app.services.instagram_service import instagram_service
+from app.services import cloudinary_service
 
 
-# Image Generation Request Models
+# Request Models
 class ImageGenerationRequest(BaseModel):
     """Request model for image generation."""
     image_prompt: str = Field(..., min_length=1, max_length=500, description="Prompt for image generation")
     post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
 
 
-# Unified Facebook post request model
 class UnifiedFacebookPostRequest(BaseModel):
     """Unified request model for creating Facebook posts with various options."""
     page_id: str = Field(..., description="Facebook page ID")
@@ -36,9 +36,7 @@ class UnifiedFacebookPostRequest(BaseModel):
     content_prompt: Optional[str] = Field(None, description="Prompt for AI text generation")
     image_prompt: Optional[str] = Field(None, description="Prompt for AI image generation")
     image_url: Optional[str] = Field(None, description="URL of existing image to use")
-    image_filename: Optional[str] = Field(None, description="Filename of existing image")
     video_url: Optional[str] = Field(None, description="URL of existing video to use (base64 data URL)")
-    video_filename: Optional[str] = Field(None, description="Filename of existing video")
     post_type: str = Field(default="feed", description="Type of post for sizing")
     use_ai_text: bool = Field(default=False, description="Whether to generate text using AI")
     use_ai_image: bool = Field(default=False, description="Whether to generate image using AI")
@@ -46,41 +44,27 @@ class UnifiedFacebookPostRequest(BaseModel):
     @model_validator(mode='after')
     def validate_content_requirements(self):
         """Ensure at least one content source is provided."""
-        text_content = self.text_content
-        content_prompt = self.content_prompt
-        image_url = self.image_url
-        image_prompt = self.image_prompt
-        video_url = self.video_url
+        has_content = any([
+            self.text_content and self.text_content.strip(),
+            self.content_prompt and self.content_prompt.strip(),
+            self.image_url and self.image_url.strip(),
+            self.image_prompt and self.image_prompt.strip(),
+            self.video_url and self.video_url.strip()
+        ])
         
-        # Check if we have any content
-        has_text = text_content and text_content.strip()
-        has_content_prompt = content_prompt and content_prompt.strip()
-        has_image_url = image_url and image_url.strip()
-        has_image_prompt = image_prompt and image_prompt.strip()
-        has_video_url = video_url and video_url.strip()
-        
-        if not any([has_text, has_content_prompt, has_image_url, has_image_prompt, has_video_url]):
+        if not has_content:
             raise ValueError("At least one of text_content, content_prompt, image_url, image_prompt, or video_url must be provided")
         
         return self
 
 
-# Instagram Image Generation Request Models
-class InstagramImageGenerationRequest(BaseModel):
-    """Request model for Instagram image generation."""
-    image_prompt: str = Field(..., min_length=1, max_length=500, description="Prompt for image generation")
-    post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
-
-
-# Instagram Carousel Generation Request Models
-class InstagramCarouselGenerationRequest(BaseModel):
-    """Request model for Instagram carousel generation."""
+class InstagramCarouselRequest(BaseModel):
+    """Request model for Instagram carousel generation and posting."""
     image_prompt: str = Field(..., min_length=1, max_length=500, description="Prompt for carousel images")
     count: int = Field(default=3, ge=3, le=7, description="Number of images to generate (3-7)")
     post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
 
 
-# Instagram Carousel Post Request Models
 class InstagramCarouselPostRequest(BaseModel):
     """Request model for Instagram carousel posting."""
     instagram_user_id: str = Field(..., description="Instagram user ID")
@@ -88,7 +72,21 @@ class InstagramCarouselPostRequest(BaseModel):
     image_urls: List[str] = Field(..., min_items=3, max_items=7, description="List of image URLs (3-7 images)")
 
 
-# Unified Instagram post request model
+class BulkComposerPost(BaseModel):
+    """Individual post data for bulk composer."""
+    caption: str = Field(..., description="Post caption")
+    scheduled_date: str = Field(..., description="Scheduled date (YYYY-MM-DD)")
+    scheduled_time: str = Field(..., description="Scheduled time (HH:MM)")
+    media_file: Optional[str] = Field(None, description="Base64 encoded media file")
+    media_filename: Optional[str] = Field(None, description="Media filename")
+
+
+class BulkComposerRequest(BaseModel):
+    """Request model for bulk composer."""
+    social_account_id: int = Field(..., description="Social account ID")
+    posts: List[BulkComposerPost] = Field(..., min_items=1, description="List of posts to schedule")
+
+
 class UnifiedInstagramPostRequest(BaseModel):
     """Unified request model for creating Instagram posts with various options."""
     instagram_user_id: str = Field(..., description="Instagram user ID")
@@ -96,7 +94,6 @@ class UnifiedInstagramPostRequest(BaseModel):
     content_prompt: Optional[str] = Field(None, description="Prompt for AI text generation")
     image_prompt: Optional[str] = Field(None, description="Prompt for AI image generation")
     image_url: Optional[str] = Field(None, description="URL of existing image to use")
-    image_filename: Optional[str] = Field(None, description="Filename of existing image")
     video_url: Optional[str] = Field(None, description="URL of existing video to use (base64 data URL)")
     video_filename: Optional[str] = Field(None, description="Filename of existing video")
     post_type: str = Field(default="feed", description="Type of post for sizing")
@@ -107,33 +104,48 @@ class UnifiedInstagramPostRequest(BaseModel):
     @model_validator(mode='after')
     def validate_content_requirements(self):
         """Ensure at least one content source is provided."""
-        caption = self.caption
-        content_prompt = self.content_prompt
-        image_url = self.image_url
-        image_prompt = self.image_prompt
-        video_url = self.video_url
-        video_filename = self.video_filename
+        has_content = any([
+            self.caption and self.caption.strip(),
+            self.content_prompt and self.content_prompt.strip(),
+            self.image_url and self.image_url.strip(),
+            self.image_prompt and self.image_prompt.strip(),
+            self.video_url and self.video_url.strip(),
+            self.video_filename and self.video_filename.strip()
+        ])
         
-        # Check if we have any content
-        has_caption = caption and caption.strip()
-        has_content_prompt = content_prompt and content_prompt.strip()
-        has_image_url = image_url and image_url.strip()
-        has_image_prompt = image_prompt and image_prompt.strip()
-        has_video_url = video_url and video_url.strip()
-        has_video_filename = video_filename and video_filename.strip()
-        
-        if not any([has_caption, has_content_prompt, has_image_url, has_image_prompt, has_video_url, has_video_filename]):
+        if not has_content:
             raise ValueError("At least one of caption, content_prompt, image_url, image_prompt, video_url, or video_filename must be provided")
         
         return self
 
-router = APIRouter(prefix="/social", tags=["social media"])
+
+class CustomStrategyCaptionRequest(BaseModel):
+    """Request model for generating captions using custom strategy templates."""
+    custom_strategy: str = Field(..., min_length=1, max_length=2000, description="Custom strategy template")
+    context: Optional[str] = Field("", description="Additional context or topic for the caption")
+    max_length: int = Field(default=2000, ge=100, le=5000, description="Maximum character length for the caption")
+
+
+class BulkCaptionGenerationRequest(BaseModel):
+    """Request model for generating captions for multiple posts."""
+    custom_strategy: str = Field(..., min_length=1, max_length=2000, description="Custom strategy template")
+    contexts: List[str] = Field(..., min_items=1, description="List of contexts for each caption")
+    max_length: int = Field(default=2000, ge=100, le=5000, description="Maximum character length for the captions")
+
+
+class InstagramImageGenerationRequest(BaseModel):
+    """Request model for Instagram image generation."""
+    image_prompt: str = Field(..., min_length=1, max_length=500, description="Prompt for image generation")
+    post_type: str = Field(default="feed", description="Type of post for sizing (feed, story, square, etc.)")
+
+
+router = APIRouter(tags=["social media"])
 
 logger = logging.getLogger(__name__)
 
 
 # Social Account Management
-@router.get("/accounts", response_model=List[SocialAccountResponse])
+@router.get("/social/accounts", response_model=List[SocialAccountResponse])
 async def get_social_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -145,7 +157,7 @@ async def get_social_accounts(
     return accounts
 
 
-@router.get("/accounts/{account_id}", response_model=SocialAccountResponse)
+@router.get("/social/accounts/{account_id}", response_model=SocialAccountResponse)
 async def get_social_account(
     account_id: int,
     current_user: User = Depends(get_current_user),
@@ -167,12 +179,13 @@ async def get_social_account(
 
 
 # Facebook Integration
-@router.get("/facebook/status")
+@router.get("/social/facebook/status")
 async def get_facebook_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Check if user has existing Facebook connections."""
+    """Check if user has existing Facebook connections and ensure AUTO_REPLY rule is present/enabled for each page."""
+    from app.models.automation_rule import AutomationRule, RuleType, TriggerType
     facebook_accounts = db.query(SocialAccount).filter(
         SocialAccount.user_id == current_user.id,
         SocialAccount.platform == "facebook",
@@ -188,6 +201,39 @@ async def get_facebook_status(
     # Separate personal accounts from pages
     personal_accounts = [acc for acc in facebook_accounts if acc.account_type == "personal"]
     page_accounts = [acc for acc in facebook_accounts if acc.account_type == "page"]
+
+    # --- Ensure AUTO_REPLY rule is present and enabled for each page ---
+    for acc in page_accounts:
+        auto_reply_rule = db.query(AutomationRule).filter(
+            AutomationRule.user_id == current_user.id,
+            AutomationRule.social_account_id == acc.id,
+            AutomationRule.rule_type == RuleType.AUTO_REPLY
+        ).first()
+        if auto_reply_rule:
+            if not auto_reply_rule.is_active:
+                auto_reply_rule.is_active = True
+                db.commit()
+        else:
+            # Create new AUTO_REPLY rule for this page
+            auto_reply_rule = AutomationRule(
+                user_id=current_user.id,
+                social_account_id=acc.id,
+                name=f"Auto Reply - {acc.display_name}",
+                rule_type=RuleType.AUTO_REPLY,
+                trigger_type=TriggerType.ENGAGEMENT_BASED,
+                trigger_conditions={
+                    "event": "comment",
+                    "selected_posts": []  # Empty means all posts
+                },
+                actions={
+                    "ai_enabled": True,
+                    "selected_facebook_post_ids": []  # Empty means all posts
+                },
+                is_active=True
+            )
+            db.add(auto_reply_rule)
+            db.commit()
+    # --- End ensure AUTO_REPLY rule ---
     
     return {
         "connected": True,
@@ -217,7 +263,7 @@ async def get_facebook_status(
     }
 
 
-@router.post("/facebook/logout")
+@router.post("/social/facebook/logout")
 async def logout_facebook(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -240,7 +286,7 @@ async def logout_facebook(
         for account in facebook_accounts:
             account.is_connected = False
             account.access_token = ""  # Clear the token for security
-            account.last_sync_at = datetime.utcnow()
+            account.last_sync_at = datetime.now()
             disconnected_count += 1
         
         db.commit()
@@ -263,7 +309,7 @@ async def logout_facebook(
         )
 
 
-@router.post("/facebook/connect")
+@router.post("/social/facebook/connect")
 async def connect_facebook(
     request: FacebookConnectRequest,
     current_user: User = Depends(get_current_user),
@@ -405,6 +451,72 @@ async def connect_facebook(
                     )
                     db.add(page_account)
                 
+                if not hasattr(page_account, 'id') or page_account.id is None:
+                    logger.error(f"Page account for page_id={page_id} has no id after creation. Skipping automation rule creation for this page.")
+                    continue
+                # --- Ensure auto-reply rule is created and enabled for this page ---
+                from app.models.automation_rule import AutomationRule, RuleType, TriggerType
+                auto_reply_rule = db.query(AutomationRule).filter(
+                    AutomationRule.user_id == current_user.id,
+                    AutomationRule.social_account_id == page_account.id,
+                    AutomationRule.rule_type == RuleType.AUTO_REPLY
+                ).first()
+                if auto_reply_rule:
+                    auto_reply_rule.is_active = True
+                    # Set to all posts by default
+                    auto_reply_rule.actions = auto_reply_rule.actions or {}
+                    auto_reply_rule.actions["ai_enabled"] = True
+                    auto_reply_rule.actions["selected_facebook_post_ids"] = []  # Empty means all posts
+                else:
+                    auto_reply_rule = AutomationRule(
+                        user_id=current_user.id,
+                        social_account_id=page_account.id,
+                        name=f"Auto Reply - {page_account.display_name}",
+                        rule_type=RuleType.AUTO_REPLY,
+                        trigger_type=TriggerType.ENGAGEMENT_BASED,
+                        trigger_conditions={
+                            "event": "comment",
+                            "selected_posts": []  # Empty means all posts
+                        },
+                        actions={
+                            "ai_enabled": True,
+                            "selected_facebook_post_ids": []  # Empty means all posts
+                        },
+                        is_active=True
+                    )
+                    db.add(auto_reply_rule)
+                # --- End auto-reply rule logic ---
+                
+                # --- Ensure auto-reply MESSAGE rule is created and enabled for this page ---
+                auto_reply_msg_rule = db.query(AutomationRule).filter(
+                    AutomationRule.user_id == current_user.id,
+                    AutomationRule.social_account_id == page_account.id,
+                    AutomationRule.rule_type == RuleType.AUTO_REPLY_MESSAGE.value
+                ).first()
+                if auto_reply_msg_rule:
+                    auto_reply_msg_rule.is_active = True
+                    auto_reply_msg_rule.actions = auto_reply_msg_rule.actions or {}
+                    auto_reply_msg_rule.actions["ai_enabled"] = True
+                    auto_reply_msg_rule.actions["message_template"] = "Thank you for your message! We'll get back to you soon."
+                else:
+                    auto_reply_msg_rule = AutomationRule(
+                        user_id=current_user.id,
+                        social_account_id=page_account.id,
+                        name=f"Auto Reply Message - {page_account.display_name}",
+                        rule_type=RuleType.AUTO_REPLY_MESSAGE.value,
+                        trigger_type=TriggerType.ENGAGEMENT_BASED,
+                        trigger_conditions={
+                            "event": "message"
+                        },
+                        actions={
+                            "ai_enabled": True,
+                            "message_template": "Thank you for your message! We'll get back to you soon."
+                        },
+                        is_active=True
+                    )
+                    db.add(auto_reply_msg_rule)
+                # --- End auto-reply MESSAGE rule logic ---
+                
                 connected_pages.append({
                     "id": page_id,
                     "name": page_data.get("name"),
@@ -439,7 +551,7 @@ async def connect_facebook(
         )
 
 
-@router.post("/facebook/post")
+@router.post("/social/facebook/post")
 async def create_facebook_post(
     request: FacebookPostRequest,
     current_user: User = Depends(get_current_user),
@@ -623,7 +735,7 @@ async def create_facebook_post(
         )
 
 
-@router.get("/facebook/posts-for-auto-reply/{page_id}")
+@router.get("/social/facebook/posts-for-auto-reply/{page_id}")
 async def get_posts_for_auto_reply(
     page_id: str,
     current_user: User = Depends(get_current_user),
@@ -677,7 +789,7 @@ async def get_posts_for_auto_reply(
         )
 
 
-@router.post("/facebook/auto-reply")
+@router.post("/social/facebook/auto-reply")
 async def toggle_auto_reply(
     request: AutoReplyToggleRequest,
     current_user: User = Depends(get_current_user),
@@ -794,7 +906,7 @@ async def toggle_auto_reply(
         )
 
 
-@router.post("/facebook/refresh-tokens")
+@router.post("/social/facebook/refresh-tokens")
 async def refresh_facebook_tokens(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -897,7 +1009,7 @@ async def refresh_facebook_tokens(
 
 
 # Facebook Image Generation Endpoints
-@router.post("/facebook/generate-image")
+@router.post("/social/facebook/generate-image")
 async def generate_facebook_image(
     request: ImageGenerationRequest,
     current_user: User = Depends(get_current_user)
@@ -948,7 +1060,7 @@ async def generate_facebook_image(
         )
 
 
-@router.post("/facebook/create-post")
+@router.post("/social/facebook/create-post")
 async def create_unified_facebook_post(
     request: UnifiedFacebookPostRequest,
     current_user: User = Depends(get_current_user),
@@ -1180,7 +1292,7 @@ async def create_unified_facebook_post(
 
 
 # Instagram Integration
-@router.post("/instagram/connect")
+@router.post("/social/instagram/connect")
 async def connect_instagram(
     request: InstagramConnectRequest,
     current_user: User = Depends(get_current_user),
@@ -1282,7 +1394,7 @@ async def connect_instagram(
         )
 
 
-@router.post("/instagram/post")
+@router.post("/social/instagram/post")
 async def create_instagram_post(
     request: InstagramPostRequest = None,
     instagram_user_id: str = None,
@@ -1410,7 +1522,7 @@ async def create_instagram_post(
         )
 
 
-@router.get("/instagram/media/{instagram_user_id}")
+@router.get("/social/instagram/media/{instagram_user_id}")
 async def get_instagram_media(
     instagram_user_id: str,
     limit: int = 25,
@@ -1466,7 +1578,7 @@ async def get_instagram_media(
         )
 
 
-@router.post("/instagram/generate-image")
+@router.post("/social/instagram/generate-image")
 async def generate_instagram_image(
     request: InstagramImageGenerationRequest,
     current_user: User = Depends(get_current_user)
@@ -1524,7 +1636,7 @@ async def generate_instagram_image(
         )
 
 
-@router.post("/instagram/upload-image")
+@router.post("/social/instagram/upload-image")
 async def upload_instagram_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
@@ -1571,7 +1683,7 @@ async def upload_instagram_image(
         )
 
 
-@router.post("/instagram/upload-video")
+@router.post("/social/instagram/upload-video")
 async def upload_instagram_video(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
@@ -1646,7 +1758,7 @@ async def upload_instagram_video(
         )
 
 
-@router.post("/instagram/generate-caption")
+@router.post("/social/instagram/generate-caption")
 async def generate_instagram_caption(
     request: dict,
     current_user: User = Depends(get_current_user)
@@ -1686,7 +1798,92 @@ async def generate_instagram_caption(
         )
 
 
-@router.post("/instagram/generate-carousel")
+@router.post("/social/generate-caption-with-strategy")
+async def generate_caption_with_custom_strategy(
+    request: CustomStrategyCaptionRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate caption using a custom strategy template."""
+    try:
+        from app.services.groq_service import groq_service
+        
+        result = await groq_service.generate_caption_with_custom_strategy(
+            custom_strategy=request.custom_strategy,
+            context=request.context,
+            max_length=request.max_length
+        )
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Caption generation failed: {result.get('error', 'Unknown error')}"
+            )
+        
+        return {
+            "success": True,
+            "content": result["content"],
+            "custom_strategy": request.custom_strategy,
+            "context": request.context
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating caption with custom strategy: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate caption: {str(e)}"
+        )
+
+
+@router.post("/social/generate-bulk-captions")
+async def generate_bulk_captions(
+    request: BulkCaptionGenerationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate captions for multiple posts using a custom strategy template."""
+    try:
+        from app.services.groq_service import groq_service
+        
+        captions = []
+        
+        for context in request.contexts:
+            result = await groq_service.generate_caption_with_custom_strategy(
+                custom_strategy=request.custom_strategy,
+                context=context,
+                max_length=request.max_length
+            )
+            
+            if result["success"]:
+                captions.append({
+                    "content": result["content"],
+                    "context": context,
+                    "success": True
+                })
+            else:
+                captions.append({
+                    "content": f"Failed to generate caption for: {context}",
+                    "context": context,
+                    "success": False,
+                    "error": result.get("error", "Unknown error")
+                })
+        
+        return {
+            "success": True,
+            "captions": captions,
+            "custom_strategy": request.custom_strategy,
+            "total_generated": len([c for c in captions if c["success"]])
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating bulk captions: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate bulk captions: {str(e)}"
+        )
+
+
+@router.post("/social/instagram/generate-carousel")
 async def generate_instagram_carousel(
     request: InstagramCarouselGenerationRequest,
     current_user: User = Depends(get_current_user)
@@ -1726,7 +1923,7 @@ async def generate_instagram_carousel(
         )
 
 
-@router.post("/instagram/post-carousel")
+@router.post("/social/instagram/post-carousel")
 async def create_instagram_carousel_post(
     request: InstagramCarouselPostRequest,
     current_user: User = Depends(get_current_user),
@@ -1812,7 +2009,7 @@ async def create_instagram_carousel_post(
         )
 
 
-@router.post("/instagram/create-post")
+@router.post("/social/instagram/create-post")
 async def create_unified_instagram_post(
     request: UnifiedInstagramPostRequest,
     current_user: User = Depends(get_current_user),
@@ -2022,7 +2219,7 @@ async def create_unified_instagram_post(
 
 
 # Post Management
-@router.get("/posts", response_model=List[PostResponse])
+@router.get("/social/posts", response_model=List[PostResponse])
 async def get_posts(
     platform: Optional[str] = None,
     status: Optional[PostStatus] = None,
@@ -2043,7 +2240,7 @@ async def get_posts(
     return posts
 
 
-@router.post("/posts", response_model=PostResponse)
+@router.post("/social/posts", response_model=PostResponse)
 async def create_post(
     post_data: PostCreate,
     current_user: User = Depends(get_current_user),
@@ -2081,7 +2278,7 @@ async def create_post(
     return post
 
 
-@router.put("/posts/{post_id}", response_model=PostResponse)
+@router.put("/social/posts/{post_id}", response_model=PostResponse)
 async def update_post(
     post_id: int,
     post_data: PostUpdate,
@@ -2115,10 +2312,10 @@ async def update_post(
 
 
 # Automation Rules Management
-@router.get("/automation-rules", response_model=List[AutomationRuleResponse])
+@router.get("/social/automation-rules", response_model=List[AutomationRuleResponse])
 async def get_automation_rules(
     platform: Optional[str] = None,
-    rule_type: Optional[RuleType] = None,
+    rule_type: Optional[str] = Query(None),  # Accept as string
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2129,13 +2326,22 @@ async def get_automation_rules(
         query = query.join(SocialAccount).filter(SocialAccount.platform == platform)
     
     if rule_type:
-        query = query.filter(AutomationRule.rule_type == rule_type)
+        # Convert to enum if needed
+        try:
+            rule_type_enum = RuleType(rule_type)
+        except ValueError:
+            # fallback: try lowercase
+            try:
+                rule_type_enum = RuleType(rule_type.lower())
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid rule_type: {rule_type}")
+        query = query.filter(AutomationRule.rule_type == rule_type_enum)
     
     rules = query.order_by(AutomationRule.created_at.desc()).all()
     return rules
 
 
-@router.post("/automation-rules", response_model=AutomationRuleResponse)
+@router.post("/social/automation-rules", response_model=AutomationRuleResponse)
 async def create_automation_rule(
     rule_data: AutomationRuleCreate,
     current_user: User = Depends(get_current_user),
@@ -2176,7 +2382,7 @@ async def create_automation_rule(
     return rule
 
 
-@router.put("/automation-rules/{rule_id}", response_model=AutomationRuleResponse)
+@router.put("/social/automation-rules/{rule_id}", response_model=AutomationRuleResponse)
 async def update_automation_rule(
     rule_id: int,
     rule_data: AutomationRuleUpdate,
@@ -2215,7 +2421,7 @@ async def update_automation_rule(
     return rule
 
 
-@router.delete("/automation-rules/{rule_id}")
+@router.delete("/social/automation-rules/{rule_id}")
 async def delete_automation_rule(
     rule_id: int,
     current_user: User = Depends(get_current_user),
@@ -2239,414 +2445,204 @@ async def delete_automation_rule(
     return SuccessResponse(message="Automation rule deleted successfully")
 
 
-# Debug endpoint for troubleshooting Facebook connections
-@router.get("/debug/facebook-accounts")
-async def debug_facebook_accounts(
+
+
+
+
+
+
+@router.get("/social/bulk-composer/content")
+async def get_bulk_composer_content(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Debug endpoint to see all Facebook accounts for current user."""
-    facebook_accounts = db.query(SocialAccount).filter(
-        SocialAccount.user_id == current_user.id,
-        SocialAccount.platform == "facebook"
-    ).all()
-    
-    return {
-        "user_id": current_user.id,
-        "total_facebook_accounts": len(facebook_accounts),
-        "accounts": [{
-            "id": acc.id,
-            "platform_user_id": acc.platform_user_id,
-            "username": acc.username,
-            "display_name": acc.display_name,
-            "account_type": acc.account_type,
-            "is_connected": acc.is_connected,
-            "follower_count": acc.follower_count,
-            "profile_picture_url": acc.profile_picture_url,
-            "platform_data": acc.platform_data,
-            "last_sync_at": acc.last_sync_at,
-            "connected_at": acc.connected_at
-        } for acc in facebook_accounts]
-    }
-
-
-# Scheduled Posts Endpoints
-@router.get("/scheduled-posts")
-async def get_scheduled_posts(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get all scheduled posts for the current user."""
-    scheduled_posts = db.query(ScheduledPost).filter(
-        ScheduledPost.user_id == current_user.id
-    ).all()
-    
-    return [{
-        "id": post.id,
-        "prompt": post.prompt,
-        "post_time": post.post_time,
-        "frequency": post.frequency.value,
-        "is_active": post.is_active,
-        "last_executed": post.last_executed.isoformat() if post.last_executed else None,
-        "next_execution": post.next_execution.isoformat() if post.next_execution else None,
-        "social_account": {
-            "id": post.social_account.id,
-            "platform": post.social_account.platform,
-            "display_name": post.social_account.display_name
-        } if post.social_account else None,
-        "created_at": post.created_at.isoformat() if post.created_at else None
-    } for post in scheduled_posts]
-
-
-@router.post("/scheduled-posts")
-async def create_scheduled_post(
-    prompt: str,
-    post_time: str,
-    frequency: str = "daily",
-    social_account_id: int = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Create a new scheduled post."""
+    """Get all bulk composer content for the current user."""
     try:
-        # Validate frequency
-        if frequency not in ["daily", "weekly", "monthly"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid frequency. Must be 'daily', 'weekly', or 'monthly'"
-            )
+        content = db.query(BulkComposerContent).filter(
+            BulkComposerContent.user_id == current_user.id
+        ).order_by(BulkComposerContent.scheduled_datetime.desc()).all()
         
-        # If no social account specified, find the first Facebook account
-        if not social_account_id:
-            facebook_account = db.query(SocialAccount).filter(
-                SocialAccount.user_id == current_user.id,
-                SocialAccount.platform == "facebook",
-                SocialAccount.is_connected == True
-            ).first()
-            
-            if not facebook_account:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No connected Facebook account found"
-                )
-            social_account_id = facebook_account.id
-        
-        # Check if there's already an active schedule for this social account
-        existing_active = db.query(ScheduledPost).filter(
-            ScheduledPost.user_id == current_user.id,
-            ScheduledPost.social_account_id == social_account_id,
-            ScheduledPost.is_active == True
-        ).first()
-        
-        if existing_active:
-            raise HTTPException(
-                status_code=400,
-                detail=f"An active schedule already exists for this account. Please deactivate the existing schedule first."
-            )
-        
-        # Calculate next execution time
-        from datetime import datetime, timedelta
-        
-        try:
-            time_parts = post_time.split(":")
-            hour = int(time_parts[0])
-            minute = int(time_parts[1])
-        except (ValueError, IndexError):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid time format. Use HH:MM"
-            )
-        
-        now = datetime.utcnow()
-        next_exec = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        
-        # If the time has already passed today, schedule for next occurrence
-        if next_exec <= now:
-            if frequency == "daily":
-                # For testing: if time passed today, schedule for next occurrence
-                next_exec += timedelta(days=1)
-            elif frequency == "weekly":
-                next_exec += timedelta(weeks=1)
-            elif frequency == "monthly":
-                next_exec += timedelta(days=30)
-        
-        # FOR TESTING: If scheduled time is more than 2 hours away, set it to 1 minute from now
-        time_diff = next_exec - now
-        if time_diff.total_seconds() > 7200:  # More than 2 hours
-            logger.info(f"Scheduled time is {time_diff.total_seconds()/3600:.1f} hours away, setting to 1 minute for testing")
-            next_exec = now + timedelta(minutes=1)
-        
-        # Create scheduled post
-        scheduled_post = ScheduledPost(
-            user_id=current_user.id,
-            social_account_id=social_account_id,
-            prompt=prompt,
-            post_time=post_time,
-            frequency=FrequencyType(frequency),
-            is_active=True,
-            next_execution=next_exec
-        )
-        
-        db.add(scheduled_post)
-        db.commit()
-        db.refresh(scheduled_post)
-        
-        logger.info(f"Created scheduled post {scheduled_post.id} for user {current_user.id}")
-        
-        return SuccessResponse(
-            message="Scheduled post created successfully",
-            data={
-                "id": scheduled_post.id,
-                "prompt": scheduled_post.prompt,
-                "post_time": scheduled_post.post_time,
-                "frequency": scheduled_post.frequency.value,
-                "next_execution": scheduled_post.next_execution.isoformat()
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating scheduled post: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create scheduled post"
-        )
-
-
-@router.delete("/scheduled-posts/{schedule_id}")
-async def delete_scheduled_post(
-    schedule_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Delete a scheduled post."""
-    try:
-        # Find the scheduled post
-        scheduled_post = db.query(ScheduledPost).filter(
-            ScheduledPost.id == schedule_id,
-            ScheduledPost.user_id == current_user.id
-        ).first()
-        
-        if not scheduled_post:
-            raise HTTPException(
-                status_code=404,
-                detail="Scheduled post not found"
-            )
-        
-        # Delete the scheduled post
-        db.delete(scheduled_post)
-        db.commit()
-        
-        logger.info(f"Deleted scheduled post {schedule_id} for user {current_user.id}")
-        
-        return SuccessResponse(
-            message="Scheduled post deleted successfully",
-            data={"deleted_id": schedule_id}
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting scheduled post {schedule_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to delete scheduled post"
-        )
-
-
-@router.put("/scheduled-posts/{schedule_id}/deactivate")
-async def deactivate_scheduled_post(
-    schedule_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Deactivate a scheduled post (set is_active to False)."""
-    try:
-        # Find the scheduled post
-        scheduled_post = db.query(ScheduledPost).filter(
-            ScheduledPost.id == schedule_id,
-            ScheduledPost.user_id == current_user.id
-        ).first()
-        
-        if not scheduled_post:
-            raise HTTPException(
-                status_code=404,
-                detail="Scheduled post not found"
-            )
-        
-        # Deactivate the scheduled post
-        scheduled_post.is_active = False
-        db.commit()
-        
-        logger.info(f"Deactivated scheduled post {schedule_id} for user {current_user.id}")
-        
-        return SuccessResponse(
-            message="Scheduled post deactivated successfully",
-            data={
-                "id": scheduled_post.id,
-                "is_active": False
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deactivating scheduled post {schedule_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to deactivate scheduled post"
-        )
-
-
-@router.post("/scheduled-posts/trigger")
-async def trigger_scheduler(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Manually trigger the scheduler to check for due posts (for testing)."""
-    try:
-        from app.services.scheduler_service import scheduler_service
-        
-        # Manually process scheduled posts
-        await scheduler_service.process_scheduled_posts()
-        
-        # Get updated scheduled posts
-        scheduled_posts = db.query(ScheduledPost).filter(
-            ScheduledPost.user_id == current_user.id
-        ).all()
-        
-        return SuccessResponse(
-            message="Scheduler triggered successfully",
-            data={
-                "processed_at": datetime.utcnow().isoformat(),
-                "total_scheduled_posts": len(scheduled_posts),
-                "active_schedules": len([p for p in scheduled_posts if p.is_active])
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"Error triggering scheduler: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to trigger scheduler"
-        )
-
-
-@router.get("/debug/stability-ai-status")
-async def debug_stability_ai_status(
-    current_user: User = Depends(get_current_user)
-):
-    """Debug endpoint to check Stability AI service status."""
-    try:
-        from app.services.fb_stability_service import stability_service
-        from app.services.image_service import image_service
-        import os
-        from pathlib import Path
-        
-        result = {
-            "stability_configured": stability_service.is_configured(),
-            "temp_images_dir_exists": Path("temp_images").exists(),
-            "temp_images_writable": os.access("temp_images", os.W_OK) if Path("temp_images").exists() else False,
-            "temp_images_files": []
+        return {
+            "success": True,
+            "data": [
+                {
+                    "id": item.id,
+                    "caption": item.caption,
+                    "scheduled_date": item.scheduled_date,
+                    "scheduled_time": item.scheduled_time,
+                    "status": item.status,
+                    "has_media": bool(item.media_file),
+                    "facebook_post_id": item.facebook_post_id,
+                    "error_message": item.error_message,
+                    "created_at": item.created_at.isoformat() if item.created_at else None
+                }
+                for item in content
+            ]
         }
         
-        # List files in temp_images directory
-        if Path("temp_images").exists():
-            try:
-                result["temp_images_files"] = [f.name for f in Path("temp_images").iterdir() if f.is_file()][-10:]  # Last 10 files
-            except Exception as e:
-                result["temp_images_error"] = str(e)
+    except Exception as e:
+        logger.error(f"Error getting bulk composer content: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get bulk composer content"
+        )
+
+
+@router.delete("/social/bulk-composer/content/{content_id}")
+async def delete_bulk_composer_content(
+    content_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a bulk composer content item."""
+    try:
+        content = db.query(BulkComposerContent).filter(
+            BulkComposerContent.id == content_id,
+            BulkComposerContent.user_id == current_user.id
+        ).first()
         
-        # Test a simple image generation if configured
-        if stability_service.is_configured():
+        if not content:
+            raise HTTPException(
+                status_code=404,
+                detail="Content not found"
+            )
+        
+        db.delete(content)
+        db.commit()
+        
+        return SuccessResponse(
+            message="Content deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting bulk composer content: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete content"
+        )
+
+
+@router.post("/social/bulk-composer/schedule")
+async def schedule_bulk_composer_posts(
+    request: BulkComposerRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Schedule multiple posts for the bulk composer."""
+    try:
+        results = []
+        
+        for post in request.posts:
             try:
-                test_result = await stability_service.generate_image(
-                    prompt="A simple test image",
-                    width=512,
-                    height=512,
-                    steps=10  # Quick generation
-                )
-                result["test_generation"] = {
-                    "success": test_result["success"],
-                    "error": test_result.get("error") if not test_result["success"] else None
-                }
-                
-                # If generation worked, try saving the image
-                if test_result["success"]:
-                    save_result = image_service.save_base64_image(
-                        base64_data=test_result["image_base64"],
-                        filename="debug_test_image.png"
+                # Validate required fields
+                if not (post.caption and post.scheduled_date and post.scheduled_time):
+                    results.append({
+                        "success": False, 
+                        "error": "Missing required fields", 
+                        "caption": post.caption
+                    })
+                    continue
+
+                # Parse scheduled datetime
+                try:
+                    scheduled_datetime = datetime.strptime(
+                        f"{post.scheduled_date} {post.scheduled_time}", 
+                        "%Y-%m-%d %H:%M"
                     )
-                    result["test_save"] = {
-                        "success": save_result["success"],
-                        "error": save_result.get("error") if not save_result["success"] else None,
-                        "file_path": save_result.get("file_path")
-                    }
-                    
+                except Exception as e:
+                    results.append({
+                        "success": False, 
+                        "error": f"Invalid date/time: {e}", 
+                        "caption": post.caption
+                    })
+                    continue
+
+                # Handle media upload if present
+                media_url = None
+                if post.media_file:
+                    # If it's a base64 string, upload to Cloudinary
+                    if isinstance(post.media_file, str) and post.media_file.startswith("data:image"):
+                        upload_result = cloudinary_service.upload_image_with_instagram_transform(post.media_file)
+                        if upload_result.get("success"):
+                            media_url = upload_result["url"]
+                        else:
+                            results.append({
+                                "success": False, 
+                                "error": upload_result.get("error", "Cloudinary upload failed"), 
+                                "caption": post.caption
+                            })
+                            continue
+                    elif isinstance(post.media_file, str) and post.media_file.startswith("data:video"):
+                        upload_result = cloudinary_service.upload_video_with_instagram_transform(post.media_file)
+                        if upload_result.get("success"):
+                            media_url = upload_result["url"]
+                        else:
+                            results.append({
+                                "success": False, 
+                                "error": upload_result.get("error", "Cloudinary upload failed"), 
+                                "caption": post.caption
+                            })
+                            continue
+                    else:
+                        # Assume it's already a URL
+                        media_url = post.media_file
+
+                # Save to DB
+                new_post = BulkComposerContent(
+                    user_id=current_user.id,
+                    social_account_id=request.social_account_id,
+                    caption=post.caption,
+                    media_file=media_url,
+                    media_filename=post.media_filename,
+                    media_generated=False,  # Default to False for uploaded media
+                    scheduled_date=post.scheduled_date,
+                    scheduled_time=post.scheduled_time,
+                    scheduled_datetime=scheduled_datetime,
+                    status=BulkComposerStatus.SCHEDULED.value
+                )
+                db.add(new_post)
+                db.commit()
+                db.refresh(new_post)
+                
+                results.append({
+                    "success": True, 
+                    "id": new_post.id, 
+                    "caption": post.caption
+                })
+                
             except Exception as e:
-                result["test_generation"] = {
-                    "success": False,
-                    "error": str(e)
-                }
-        
-        return result
+                logger.error(f"Error scheduling post: {e}")
+                results.append({
+                    "success": False, 
+                    "error": str(e), 
+                    "caption": post.caption
+                })
+
+        return {"results": results}
         
     except Exception as e:
-        logger.error(f"Debug stability AI status error: {e}")
-        return {
-            "error": str(e)
-        }
+        logger.error(f"Error scheduling bulk composer posts: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to schedule bulk composer posts"
+        )
 
 
-@router.get("/debug/instagram-stability-status")
-async def debug_instagram_stability_status(
-    current_user: User = Depends(get_current_user)
-):
-    """Debug endpoint to check Instagram Stability AI configuration."""
-    try:
-        from app.services.stability_service import stability_service
-        import os
-        
-        # Check Instagram Stability service
-        configured = stability_service.is_configured()
-        api_key = stability_service.api_key
-        
-        key_info = "Configured" if api_key else "Not configured"
-        if api_key:
-            key_info += f" (starts with: {api_key[:10]}...)"
-        
-        # Test the API key with a simple request
-        test_result = None
-        if configured:
-            try:
-                test_result = await stability_service.generate_image("test")
-                test_status = "Success" if test_result.get("success") else f"Failed: {test_result.get('error', 'Unknown error')}"
-            except Exception as e:
-                test_status = f"Exception: {str(e)}"
-        else:
-            test_status = "Not configured"
-        
-        return {
-            "instagram_stability_service": {
-                "configured": configured,
-                "api_key_status": key_info,
-                "test_result": test_status
-            },
-            "environment_variable": {
-                "STABILITY_API_KEY_set": bool(os.getenv("STABILITY_API_KEY")),
-                "value_preview": os.getenv("STABILITY_API_KEY", "")[:10] + "..." if os.getenv("STABILITY_API_KEY") else "Not set"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error checking Instagram Stability AI status: {e}")
-        return {
-            "error": str(e)
-        }
 
 
-@router.post("/debug/test-facebook-image-post")
+
+
+
+
+
+
+
+
+
+
+@router.post("/social/debug/test-facebook-image-post")
 async def debug_test_facebook_image_post(
     page_id: str,
     test_message: str = "Test post from debug endpoint",
@@ -2695,7 +2691,7 @@ async def debug_test_facebook_image_post(
         }
 
 
-@router.get("/debug/imgbb-test")
+@router.get("/social/debug/imgbb-test")
 async def debug_imgbb_test(
     current_user: User = Depends(get_current_user)
 ):
@@ -2741,7 +2737,7 @@ async def debug_imgbb_test(
         }
 
 
-@router.post("/debug/simple-facebook-test")
+@router.post("/social/debug/simple-facebook-test")
 async def debug_simple_facebook_test(
     page_id: str,
     current_user: User = Depends(get_current_user),
@@ -2821,7 +2817,7 @@ async def debug_simple_facebook_test(
         }
 
 
-@router.get("/debug/instagram-accounts")
+@router.get("/social/debug/instagram-accounts")
 async def debug_instagram_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2851,7 +2847,7 @@ async def debug_instagram_accounts(
     }
 
 
-@router.get("/instagram/posts-for-auto-reply/{instagram_user_id}")
+@router.get("/social/instagram/posts-for-auto-reply/{instagram_user_id}")
 async def get_instagram_posts_for_auto_reply(
     instagram_user_id: str,
     current_user: User = Depends(get_current_user),
@@ -2921,7 +2917,7 @@ async def get_instagram_posts_for_auto_reply(
         )
 
 
-@router.post("/instagram/auto-reply")
+@router.post("/social/instagram/auto-reply")
 async def toggle_instagram_auto_reply(
     request: InstagramAutoReplyToggleRequest,
     current_user: User = Depends(get_current_user),
@@ -3060,7 +3056,7 @@ async def toggle_instagram_auto_reply(
         )
 
 
-@router.get("/debug/instagram-auto-reply-status")
+@router.get("/social/debug/instagram-auto-reply-status")
 async def debug_instagram_auto_reply_status(
     instagram_user_id: str,
     current_user: User = Depends(get_current_user),
@@ -3142,7 +3138,7 @@ async def debug_instagram_auto_reply_status(
         }
 
 
-@router.post("/debug/test-instagram-comment")
+@router.post("/social/debug/test-instagram-comment")
 async def debug_test_instagram_comment(
     instagram_user_id: str,
     media_id: str,
@@ -3193,7 +3189,7 @@ async def debug_test_instagram_comment(
         }
 
 
-@router.get("/debug/instagram-comments/{instagram_user_id}")
+@router.get("/social/debug/instagram-comments/{instagram_user_id}")
 async def debug_get_instagram_comments(
     instagram_user_id: str,
     media_id: Optional[str] = None,
@@ -3247,7 +3243,7 @@ async def debug_get_instagram_comments(
         }
 
 
-@router.post("/instagram/sync-posts/{instagram_user_id}")
+@router.post("/social/instagram/sync-posts/{instagram_user_id}")
 async def sync_instagram_posts(
     instagram_user_id: str,
     current_user: User = Depends(get_current_user),
@@ -3326,7 +3322,7 @@ async def sync_instagram_posts(
         )
 
 
-@router.get("/debug/instagram-sync-test/{instagram_user_id}")
+@router.get("/social/debug/instagram-sync-test/{instagram_user_id}")
 async def debug_instagram_sync_test(
     instagram_user_id: str,
     current_user: User = Depends(get_current_user),
@@ -3390,6 +3386,39 @@ async def debug_instagram_sync_test(
         
     except Exception as e:
         logger.error(f"Error in Instagram sync test: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/social/debug/facebook-message-auto-reply")
+async def debug_facebook_message_auto_reply_endpoint(
+    page_id: str = Body(...),
+    access_token: str = Body(...),
+    reply_text: str = Body("Thank you for your message! We'll get back to you soon.")
+):
+    """
+    Debug endpoint to test Facebook message auto-reply functionality.
+    """
+    try:
+        from app.services.facebook_message_auto_reply_service import facebook_message_auto_reply_service
+        
+        # Create a mock rule for testing
+        mock_rule = type('MockRule', (), {
+            'actions': {'message_template': reply_text}
+        })()
+        
+        # Test the new service
+        await facebook_message_auto_reply_service.process_page_messages(page_id, access_token, mock_rule)
+        
+        return {
+            "success": True,
+            "message": "Facebook message auto-reply test completed successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in Facebook message auto-reply test: {e}")
         return {
             "success": False,
             "error": str(e)

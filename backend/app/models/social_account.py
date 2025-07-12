@@ -42,8 +42,9 @@ class SocialAccount(Base):
     # Relationships
     user = relationship("User", back_populates="social_accounts")
     posts = relationship("Post", back_populates="social_account")
-    scheduled_posts = relationship("ScheduledPost", back_populates="social_account")
+
     automation_rules = relationship("AutomationRule", back_populates="social_account")
+    bulk_composer_content = relationship("BulkComposerContent", back_populates="social_account")
     
     def __repr__(self):
         return f"<SocialAccount(id={self.id}, platform='{self.platform}', username='{self.username}')>" 

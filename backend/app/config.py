@@ -11,14 +11,14 @@ class Settings(BaseSettings):
     # PostgreSQL specific settings
     db_host: str = os.getenv("DB_HOST", "localhost")
     db_port: int = int(os.getenv("DB_PORT", "5432"))
-    db_name: str = os.getenv("DB_NAME", "auto_dash")
+    db_name: str = os.getenv("DB_NAME", "automation_dashboard")
     db_user: str = os.getenv("DB_USER", "postgres")
-    db_password: str = os.getenv("DB_PASSWORD", "Thor")
+    db_password: str = os.getenv("DB_PASSWORD")
 
     # JWT Authentication
-    secret_key: str = os.getenv("SECRET_KEY", "change-me")
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 440
+    secret_key: str = os.getenv("SECRET_KEY")
+    algorithm: str = os.getenv("ALGORITHM")
+    access_token_expire_minutes: int = 440 
 
     # Facebook Integration
     facebook_app_id: str | None = os.getenv("FACEBOOK_APP_ID")

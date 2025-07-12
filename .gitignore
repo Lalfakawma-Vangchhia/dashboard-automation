@@ -12,11 +12,15 @@ node_modules/
 # Testing
 /coverage
 .pytest_cache/
+
+# Python cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+*.py[cod]
+*$py.class
 
 # Production builds
 /build/
@@ -143,6 +147,7 @@ Thumbs.db
 # Cache directories
 .cache/
 *.cache
+node_modules/.cache/
 
 # Compiled files
 *.com
@@ -167,3 +172,6 @@ client_secrets.json
 token.json
 *.key
 *.pem
+
+# Vitual Environment
+/backend/asgard/
