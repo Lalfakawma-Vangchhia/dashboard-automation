@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Body, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
@@ -20,10 +20,12 @@ from pydantic import BaseModel, Field, model_validator
 from datetime import datetime, timedelta
 import logging
 from app.services.instagram_service import instagram_service
-from app.services import cloudinary_service
+from app.services.cloudinary_service import cloudinary_service
 from uuid import uuid4
 from app.services.linkedin_service import LinkedInService
 import pytz
+from app.models.dm_auto_reply_status import DmAutoReplyStatus
+from app.models.scheduled_post import ScheduledPost, PostType, FrequencyType
 
 
 # Request Models
@@ -2577,7 +2579,6 @@ async def schedule_bulk_composer_posts(
     try:
         results = []
         schedule_batch_id = str(uuid4())  # Unique batch ID for this scheduling action
-        
         for post in request.posts:
             try:
                 # Validate required fields
@@ -2680,9 +2681,24 @@ async def schedule_bulk_composer_posts(
                     "error": str(e), 
                     "caption": post.caption
                 })
-
-        return {"results": results}
-        
+        # Determine overall success
+        failed_posts = [r for r in results if not r["success"]]
+        scheduled_posts = [r for r in results if r["success"]]
+        if failed_posts:
+            return {
+                "success": False,
+                "message": f"Bulk scheduling completed with {len(scheduled_posts)} successes and {len(failed_posts)} failures.",
+                "scheduled_posts": scheduled_posts,
+                "failed_posts": failed_posts,
+                "results": results
+            }
+        else:
+            return {
+                "success": True,
+                "message": f"Bulk scheduling completed. {len(scheduled_posts)} posts scheduled.",
+                "scheduled_posts": scheduled_posts,
+                "results": results
+            }
     except Exception as e:
         logger.error(f"Error scheduling bulk composer posts: {str(e)}")
         raise HTTPException(
@@ -3064,7 +3080,7 @@ async def toggle_instagram_auto_reply(
                 "selected_instagram_post_ids": selected_posts
             }
             auto_reply_rule.actions = rule_actions
-            logger.info(f"🔄 Updated existing Instagram rule {auto_reply_rule.id} with actions: {rule_actions}")
+            logger.info(f"🔄 Updated existing rule {auto_reply_rule.id} with actions: {rule_actions}")
         else:
             # Create new auto-reply rule
             rule_actions = {
@@ -3681,3 +3697,242 @@ async def get_linkedin_config(
     except Exception as e:
         logger.error(f"Error getting LinkedIn config: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get LinkedIn configuration: {str(e)}")
+
+# Instagram DM Auto-Reply Routes
+class InstagramDmAutoReplyToggleRequest(BaseModel):
+    instagram_user_id: str
+    enabled: bool
+
+@router.post("/social/instagram/dm-auto-reply")
+async def toggle_instagram_dm_auto_reply(
+    request: InstagramDmAutoReplyToggleRequest, 
+    db: Session = Depends(get_db), 
+    user: User = Depends(get_current_user)
+):
+    """Toggle Instagram DM auto-reply for a user."""
+    try:
+        from app.models.dm_auto_reply_status import DmAutoReplyStatus
+        
+        # Update DM auto-reply status
+        status = db.query(DmAutoReplyStatus).filter_by(instagram_user_id=request.instagram_user_id).first()
+        if status:
+            status.enabled = request.enabled
+        else:
+            status = DmAutoReplyStatus(instagram_user_id=request.instagram_user_id, enabled=request.enabled, last_processed_dm_id=None)
+            db.add(status)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Instagram DM auto-reply {'enabled' if request.enabled else 'disabled'} successfully",
+            "enabled": request.enabled
+        }
+        
+    except Exception as e:
+        logger.error(f"Error toggling Instagram DM auto-reply: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to toggle Instagram DM auto-reply: {str(e)}"
+        )
+
+@router.get("/social/instagram/dm-auto-reply/status/{instagram_user_id}")
+async def get_instagram_dm_auto_reply_status(
+    instagram_user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get Instagram DM auto-reply status for a user."""
+    try:
+        from app.models.dm_auto_reply_status import DmAutoReplyStatus
+        
+        dm_auto_reply_enabled = DmAutoReplyStatus.is_enabled(instagram_user_id, db)
+        
+        return {
+            "success": True,
+            "enabled": dm_auto_reply_enabled
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting Instagram DM auto-reply status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Instagram DM auto-reply status: {str(e)}"
+        )
+
+# Instagram Global Auto-Reply Routes
+@router.post("/social/instagram/auto_reply/global/enable")
+async def enable_instagram_global_auto_reply(
+    instagram_user_id: str, 
+    user: User = Depends(get_current_user), 
+    background_tasks: BackgroundTasks = None
+):
+    """Enable global auto-reply for Instagram account."""
+    try:
+        from app.services.instagram_auto_reply_service import enable_global_auto_reply
+        
+        if background_tasks:
+            background_tasks.add_task(enable_global_auto_reply, instagram_user_id, user)
+        else:
+            await enable_global_auto_reply(instagram_user_id, user)
+        
+        return {
+            "success": True,
+            "message": "Global auto-reply enabled successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error enabling global auto-reply: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enable global auto-reply: {str(e)}"
+        )
+
+@router.post("/social/instagram/auto_reply/global/disable")
+async def disable_instagram_global_auto_reply(
+    instagram_user_id: str, 
+    user: User = Depends(get_current_user)
+):
+    """Disable global auto-reply for Instagram account."""
+    try:
+        from app.services.instagram_auto_reply_service import disable_global_auto_reply
+        
+        await disable_global_auto_reply(instagram_user_id, user)
+        
+        return {
+            "success": True,
+            "message": "Global auto-reply disabled successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error disabling global auto-reply: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to disable global auto-reply: {str(e)}"
+        )
+
+@router.get("/social/instagram/auto_reply/global/status")
+async def get_instagram_global_auto_reply_status(
+    instagram_user_id: str, 
+    user: User = Depends(get_current_user)
+):
+    """Get global auto-reply status for Instagram account."""
+    try:
+        from app.services.instagram_auto_reply_service import get_global_auto_reply_status
+        
+        enabled = await get_global_auto_reply_status(instagram_user_id, user)
+        
+        return {
+            "success": True,
+            "enabled": enabled
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting global auto-reply status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get global auto-reply status: {str(e)}"
+        )
+
+@router.get("/social/instagram/auto_reply/global/progress")
+async def get_global_instagram_auto_reply_progress(instagram_user_id: str):
+    # Dummy implementation: always return 100% complete
+    return {"progress": 100, "status": "completed"}
+
+@router.get("/social/scheduled-posts")
+def get_scheduled_posts(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    posts = db.query(ScheduledPost).filter(
+        ScheduledPost.user_id == current_user.id
+    ).order_by(ScheduledPost.scheduled_datetime.desc()).all()
+    return [
+        {
+            "id": post.id,
+            "prompt": post.prompt,  # UI expects 'prompt'
+            "post_type": post.post_type.value if hasattr(post.post_type, "value") else post.post_type,
+            "scheduled_datetime": post.scheduled_datetime.isoformat() if post.scheduled_datetime else None,
+            "status": post.status,
+            "media_url": post.image_url or (post.media_urls[0] if post.media_urls else None) or post.video_url,
+            "platform": post.platform,
+        }
+        for post in posts
+    ]
+
+@router.post("/social/instagram/bulk-schedule")
+def bulk_schedule_instagram_posts(
+    social_account_id: int,
+    posts: List[dict],
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    ist = pytz.timezone("Asia/Kolkata")
+    scheduled_posts = []
+    failed_posts = []
+
+    # Validate social account
+    social_account = db.query(SocialAccount).filter(
+        SocialAccount.id == social_account_id,
+        SocialAccount.platform == "instagram"
+    ).first()
+    if not social_account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    for idx, post in enumerate(posts):
+        try:
+            caption = post.get("caption", "")
+            scheduled_date = post.get("scheduled_date")
+            scheduled_time = post.get("scheduled_time")
+            post_type = post.get("post_type", "photo")
+            # Add media fields as needed (image_url, media_urls, video_url, etc.)
+
+            # Combine date and time as IST
+            dt = ist.localize(datetime.strptime(f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"))
+
+            # Set image_url for photo posts
+            image_url = None
+            media_urls = None
+            video_url = None
+            if post_type == "photo":
+                image_url = post.get("media_file") or post.get("mediaPreview") or post.get("image_url")
+            elif post_type == "carousel":
+                media_urls = post.get("carousel_images")
+            elif post_type == "reel":
+                video_url = post.get("media_file") or post.get("video_url")
+
+            scheduled_post = ScheduledPost(
+                user_id=current_user.id,
+                social_account_id=social_account_id,
+                prompt=caption,
+                scheduled_datetime=dt,
+                post_type=PostType(post_type),
+                platform="instagram",
+                status="scheduled",
+                is_active=True,
+                frequency=FrequencyType.DAILY,  # or set as needed
+                post_time=scheduled_time,
+                image_url=image_url,
+                media_urls=media_urls,
+                video_url=video_url,
+            )
+            db.add(scheduled_post)
+            scheduled_posts.append({
+                "caption": caption,
+                "scheduled_date": scheduled_date,
+                "scheduled_time": scheduled_time,
+                "scheduled_datetime": dt.isoformat(),
+                "status": "scheduled"
+            })
+        except Exception as e:
+            failed_posts.append({
+                "index": idx,
+                "error": str(e),
+                "caption": post.get("caption", ""),
+                "scheduled_date": post.get("scheduled_date"),
+                "scheduled_time": post.get("scheduled_time")
+            })
+
+    db.commit()
+    return {
+        "success": len(failed_posts) == 0,
+        "scheduled_posts": scheduled_posts,
+        "failed_posts": failed_posts
+    }

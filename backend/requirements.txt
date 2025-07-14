@@ -15,6 +15,7 @@ click==8.2.1
 click-didyoumean==0.3.1
 click-plugins==1.1.1
 click-repl==0.3.0
+cloudinary
 colorama==0.4.6
 cryptography==45.0.4
 distro==1.9.0

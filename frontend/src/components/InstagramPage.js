@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import apiClient from '../services/apiClient';
 import { useAuth } from '../contexts/AuthContext';
+import IgBulkComposer from './igBulkComposer';
 import './InstagramPage.css';
+import ScheduledPostHistory from './ScheduledPostHistory';
 
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 const ACCEPTED_VIDEO_TYPES = ['video/mp4'];
 
 const InstagramPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated, loading: authLoading, user } = useAuth();
 
   // UI State
@@ -30,6 +33,7 @@ const InstagramPage = () => {
   const [imageSource, setImageSource] = useState('ai'); // ai | upload | drive
   const [uploadedImageUrl, setUploadedImageUrl] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
   const [autoGenerateCaption, setAutoGenerateCaption] = useState(false);
   const [captionPrompt, setCaptionPrompt] = useState('');
   const [generatingCaption, setGeneratingCaption] = useState(false);
@@ -37,11 +41,13 @@ const InstagramPage = () => {
 
   // Carousel State
   const [carouselImages, setCarouselImages] = useState([]); // URLs
+  const [carouselFiles, setCarouselFiles] = useState([]); // File objects
   const [carouselCount, setCarouselCount] = useState(3);
   const [carouselCaption, setCarouselCaption] = useState('');
   const [carouselGenerating, setCarouselGenerating] = useState(false);
 
   // Reel State
+  const [reelFile, setReelFile] = useState(null);
   const [reelUrl, setReelUrl] = useState('');
   const [reelFilename, setReelFilename] = useState('');
   const [reelCaption, setReelCaption] = useState('');
@@ -50,6 +56,7 @@ const InstagramPage = () => {
   const [reelCaptionPrompt, setReelCaptionPrompt] = useState('');
   const [generatingReelCaption, setGeneratingReelCaption] = useState(false);
   // Thumbnail State for Reel
+  const [reelThumbnailFile, setReelThumbnailFile] = useState(null);
   const [reelThumbnailUrl, setReelThumbnailUrl] = useState('');
   const [reelThumbnailFilename, setReelThumbnailFilename] = useState('');
 
@@ -73,6 +80,11 @@ const InstagramPage = () => {
   const [loadingAutoReplyPosts, setLoadingAutoReplyPosts] = useState(false);
   const [isSelectingPosts, setIsSelectingPosts] = useState(false);
 
+  // DM Auto-Reply State
+  const [dmAutoReplyEnabled, setDmAutoReplyEnabled] = useState(false);
+  const [dmAutoReplyTemplate, setDmAutoReplyTemplate] = useState('Thanks for your message! I\'ll get back to you soon. 😊');
+  const [dmAutoReplyLoading, setDmAutoReplyLoading] = useState(false);
+
   // File Picker Modal State
   const [showFilePicker, setShowFilePicker] = useState(false);
   const [filePickerType, setFilePickerType] = useState(''); // 'photo' or 'video'
@@ -80,15 +92,119 @@ const InstagramPage = () => {
   const [isLoadingGoogleDrive, setIsLoadingGoogleDrive] = useState(false);
   const [googleDriveAvailable, setGoogleDriveAvailable] = useState(false);
 
+  // Bulk Composer State
+  const [showBulkComposer, setShowBulkComposer] = useState(false);
+
   // Facebook SDK
-  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '697225659875731';
+  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '24054495060908418';
 
   // Mobile detection utility
   const isMobile = () => window.innerWidth <= 768;
 
+  // --- New: Global Auto-Reply State ---
+  const [globalAutoReplyEnabled, setGlobalAutoReplyEnabled] = useState(false);
+  const [globalAutoReplyLoading, setGlobalAutoReplyLoading] = useState(false);
+  const [globalAutoReplyStatus, setGlobalAutoReplyStatus] = useState(''); // For toast/feedback
+
+  // --- New: Global Auto-Reply Progress State ---
+  const [globalAutoReplyProgress, setGlobalAutoReplyProgress] = useState(null);
+
+  // --- New: Global Auto-Reply Error and Retry State ---
+  const [apiError, setApiError] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+
+  // --- New: Toast Notification ---
+  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
+  const showToast = (message, type = 'info') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 3500);
+  };
+
+  // --- New: Global Auto-Reply API Logic ---
+  const handleGlobalAutoReplyToggle = async () => {
+    if (!selectedAccount) {
+      showToast('Please select an Instagram account first.', 'error');
+      return;
+    }
+    setGlobalAutoReplyLoading(true);
+    setApiError(null);
+    try {
+      if (!globalAutoReplyEnabled) {
+        const enableRes = await apiClient.enableGlobalInstagramAutoReply(selectedAccount.platform_user_id);
+        if (enableRes.success) {
+                  setGlobalAutoReplyEnabled(true);
+        // eslint-disable-next-line no-undef
+        setGlobalAutoReplyStatus('enabled');
+        showToast('Auto-reply enabled for all posts and comments!', 'success');
+        } else {
+          setApiError(enableRes.error || 'Failed to enable auto-reply.');
+          showToast('Failed to enable auto-reply: ' + (enableRes.error || 'Unknown error'), 'error');
+        }
+      } else {
+        const disableRes = await apiClient.disableGlobalInstagramAutoReply(selectedAccount.platform_user_id);
+        if (disableRes.success) {
+                  setGlobalAutoReplyEnabled(false);
+        // eslint-disable-next-line no-undef
+        setGlobalAutoReplyStatus('disabled');
+        showToast('Auto-reply disabled.', 'info');
+        } else {
+          setApiError(disableRes.error || 'Failed to disable auto-reply.');
+          showToast('Failed to disable auto-reply: ' + (disableRes.error || 'Unknown error'), 'error');
+        }
+      }
+    } catch (err) {
+      setApiError(err.message || JSON.stringify(err));
+      showToast('Error: ' + (err.message || err.toString()), 'error');
+    } finally {
+      setGlobalAutoReplyLoading(false);
+    }
+  };
+
+  // --- New: Fetch initial global auto-reply status on account select ---
+  useEffect(() => {
+    const fetchGlobalAutoReplyStatus = async () => {
+      if (!selectedAccount) return;
+      try {
+        const statusRes = await apiClient.getGlobalInstagramAutoReplyStatus(selectedAccount.platform_user_id);
+        setGlobalAutoReplyEnabled(!!statusRes.enabled);
+        // eslint-disable-next-line no-undef
+        setGlobalAutoReplyStatus(statusRes.enabled ? 'enabled' : 'disabled');
+      } catch (err) {
+        setGlobalAutoReplyEnabled(false);
+        // eslint-disable-next-line no-undef
+        setGlobalAutoReplyStatus('disabled');
+      }
+    };
+    fetchGlobalAutoReplyStatus();
+  }, [selectedAccount]);
+
+  // --- New: Poll for global auto-reply progress when enabled ---
+  useEffect(() => {
+    let intervalId;
+    const pollProgress = async () => {
+      if (!selectedAccount || !globalAutoReplyEnabled) return;
+      try {
+        const res = await apiClient.getGlobalInstagramAutoReplyProgress(selectedAccount.platform_user_id);
+        if (res.success) {
+          setGlobalAutoReplyProgress(res.progress);
+          setApiError(null);
+        }
+      } catch (err) {
+        setApiError(err.message || JSON.stringify(err));
+        // Optionally, showToast('Progress error: ' + (err.message || err.toString()), 'error');
+      }
+    };
+    if (globalAutoReplyEnabled && selectedAccount) {
+      pollProgress();
+      intervalId = setInterval(pollProgress, 3000);
+    } else {
+      setGlobalAutoReplyProgress(null);
+    }
+    return () => intervalId && clearInterval(intervalId);
+  }, [globalAutoReplyEnabled, selectedAccount]);
 
   // --- Facebook SDK Helpers ---
-    const checkLoginStatus = useCallback(() => {
+    const checkLoginStatus = () => {
       if (!window.FB || !isAuthenticated) return;
       window.FB.getLoginStatus((response) => {
         if (response.status === 'connected') {
@@ -99,8 +215,8 @@ const InstagramPage = () => {
           setMessage('Instagram: Please connect your Facebook account to continue');
         }
       });
-    }, [isAuthenticated, handleConnectInstagram]);
-    const initializeFacebookSDK = useCallback(() => {
+    };
+    const initializeFacebookSDK = () => {
       if (window.FB) {
       window.FB.init({ appId: INSTAGRAM_APP_ID, cookie: true, xfbml: true, version: 'v18.0' });
         setSdkLoaded(true);
@@ -119,7 +235,7 @@ const InstagramPage = () => {
         js.src = "https://connect.facebook.net/en_US/sdk.js";
         fjs.parentNode.insertBefore(js, fjs);
       }(document, 'script', 'facebook-jssdk'));
-    }, [checkLoginStatus]);
+    };
 
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
@@ -127,7 +243,7 @@ const InstagramPage = () => {
     initializeFacebookSDK();
       checkGoogleDriveAvailability();
     }
-  }, [isAuthenticated, authLoading, checkLoginStatus, initializeFacebookSDK, checkGoogleDriveAvailability]);
+  }, [isAuthenticated, authLoading]);
 
   useEffect(() => {
     checkLoginStatus();
@@ -151,25 +267,29 @@ const InstagramPage = () => {
     try {
       setMessage('Fetching Instagram Business accounts...');
       const response = await apiClient.connectInstagram(accessToken);
-      if (response.success && response.data && response.data.accounts && response.data.accounts.length > 0) {
-        const mappedAccounts = response.data.accounts.map(account => ({
-          id: account.platform_id, // Internal database ID
-          platform_user_id: account.platform_id, // Instagram user ID for API calls
-          username: account.username,
-          name: account.display_name || account.page_name,
-          followers_count: account.followers_count || 0,
-          media_count: account.media_count || 0,
-          profile_picture_url: account.profile_picture
-        }));
-        setInstagramAccounts(mappedAccounts);
-        setIsConnected(true);
-        setMessage(`Found ${mappedAccounts.length} Instagram Business account(s)!`);
-        if (mappedAccounts.length === 1) {
-          setSelectedAccount(mappedAccounts[0]);
-          loadUserMedia(mappedAccounts[0].platform_user_id);
-        }
-      } else {
-        setMessage('No Instagram Business accounts found. Make sure you have an Instagram Business account connected to your Facebook Page.');
+
+      // Fetch the full list of social accounts from the backend
+      const allAccounts = await apiClient.getSocialAccounts();
+      // Filter for Instagram accounts
+      const instagramAccountsFromBackend = allAccounts.filter(acc => acc.platform === 'instagram');
+
+      // Map and merge info for display
+      const mappedAccounts = instagramAccountsFromBackend.map(account => ({
+        id: account.id, // Internal DB ID
+        platform_user_id: account.platform_user_id, // Instagram user ID
+        username: account.username,
+        name: account.display_name || account.page_name,
+        followers_count: account.follower_count || 0,
+        media_count: account.media_count || 0,
+        profile_picture_url: account.profile_picture_url
+      }));
+
+      setInstagramAccounts(mappedAccounts);
+      setIsConnected(true);
+      setMessage(`Found ${mappedAccounts.length} Instagram Business account(s)!`);
+      if (mappedAccounts.length === 1) {
+        setSelectedAccount(mappedAccounts[0]);
+        loadUserMedia(mappedAccounts[0].platform_user_id);
       }
     } catch (error) {
       setMessage(error.message || 'Unknown error occurred');
@@ -196,7 +316,7 @@ const InstagramPage = () => {
         setLoading(false);
       }
     }, {
-      scope: 'pages_show_list,instagram_basic,instagram_content_publish,pages_read_engagement'
+      scope: 'pages_show_list,instagram_basic,instagram_content_publish,pages_read_engagement, business_management'
     });
   };
 
@@ -235,6 +355,7 @@ const InstagramPage = () => {
       if (res && res.success && res.data && res.data.url) {
         setUploadedImageUrl(res.data.url);
         setAiImageUrl(res.data.url);
+        setSelectedImageFile(file);
         setMessage('Image uploaded successfully!');
       } else {
         throw new Error(res?.error || 'Upload failed');
@@ -572,11 +693,15 @@ const InstagramPage = () => {
         const filename = res.filename || res.data?.filename;
         setReelUrl(videoUrl);
         setReelFilename(filename || ''); // Store the filename for file-based posting
+        // eslint-disable-next-line no-undef
+        setReelFile(file);
         setMessage('Video uploaded successfully!');
       } else if (res && res.data && res.data.url) {
         // Alternative response structure
         setReelUrl(res.data.url);
         setReelFilename(res.data.filename || '');
+        // eslint-disable-next-line no-undef
+        setReelFile(file);
         setMessage('Video uploaded successfully!');
       } else {
         throw new Error(res?.error || res?.message || 'Upload failed');
@@ -630,6 +755,8 @@ const InstagramPage = () => {
         const filename = res.filename || res.data?.filename;
         setReelThumbnailUrl(imageUrl);
         setReelThumbnailFilename(filename || '');
+        // eslint-disable-next-line no-undef
+        setReelThumbnailFile(file);
         setMessage('Thumbnail uploaded successfully!');
       } else {
         throw new Error(res?.error || res?.message || 'Thumbnail upload failed');
@@ -639,17 +766,16 @@ const InstagramPage = () => {
     }
   };
 
-
-
-  const disconnectGoogleDrive = async () => {
+  // --- Google Drive Integration ---
+  const checkGoogleDriveAuth = async () => {
     try {
-      await apiClient.disconnectGoogleDrive();
-      setDriveAuthenticated(false);
-      setGoogleDriveAvailable(false);
-      setMessage('Google Drive disconnected successfully!');
+      const response = await apiClient.getGoogleDriveStatus();
+      setDriveAuthenticated(response.authenticated);
+      return response.authenticated;
     } catch (error) {
-      console.error('Error disconnecting Google Drive:', error);
-      setMessage(`Failed to disconnect Google Drive: ${error.message}`);
+      console.error('Error checking Google Drive auth:', error);
+      setDriveAuthenticated(false);
+      return false;
     }
   };
 
@@ -747,7 +873,15 @@ const InstagramPage = () => {
     }
   };
 
-
+  const openDriveModal = async () => {
+    const isAuth = await checkGoogleDriveAuth();
+    if (!isAuth) {
+      await authenticateGoogleDrive();
+    } else {
+      await loadDriveFiles();
+    }
+    setShowDriveModal(true);
+  };
 
   // File Picker Functions
   const openFilePicker = (type, formType) => {
@@ -814,7 +948,7 @@ const InstagramPage = () => {
       }
       
       // Get fresh token for picker
-      await apiClient.getGoogleDriveAuth();
+      const authResult = await apiClient.getGoogleDriveAuth();
       
       // Open Google Drive picker
       const picker = new window.google.picker.PickerBuilder()
@@ -822,7 +956,7 @@ const InstagramPage = () => {
           .setIncludeFolders(true)
           .setSelectFolderEnabled(false)
           .setMimeTypes(filePickerType === 'photo' ? 'image/*' : 'video/*'))
-        // .setOAuthToken(authResult.access_token) // Removed to prevent Facebook SDK conflicts
+        .setOAuthToken(authResult.access_token)
         .setDeveloperKey(process.env.REACT_APP_GOOGLE_DEVELOPER_KEY || '')
         .setCallback(handleGoogleDriveCallback)
         .enableFeature(window.google.picker.Feature.NAV_HIDDEN)
@@ -980,11 +1114,11 @@ const InstagramPage = () => {
 
     try {
       // Use the unified Instagram post endpoint for all post types
-      const options = {
-        instagram_user_id: selectedAccount.platform_user_id,
-        post_type: postType === 'photo' ? 'feed' : postType,
-        media_type: postType === 'reel' ? 'REELS' : 'image'
-      };
+              const options = {
+          instagram_user_id: selectedAccount.platform_user_id,
+          post_type: postType === 'photo' ? 'feed' : postType,
+          media_type: postType === 'reel' ? 'REELS' : 'image'
+        };
 
       // Handle different post types
       if (postType === 'photo') {
@@ -1105,14 +1239,20 @@ const InstagramPage = () => {
         setUploadedImageUrl('');
         setReelUrl('');
         setReelFilename(''); // Clear the filename too
+        // eslint-disable-next-line no-undef
+        setReelFile(null);
+        setSelectedImageFile(null);
         setAiPrompt('');
         setCaptionPrompt('');
         setReelThumbnailUrl('');
         setReelThumbnailFilename('');
+        // eslint-disable-next-line no-undef
+        setReelThumbnailFile(null);
         // Reload user media
         if (selectedAccount) {
           loadUserMedia(selectedAccount.platform_user_id);
         }
+        setActiveTab('scheduled-posts');
       } else {
         let errorMsg = `Failed to create post: ${response.error || 'Unknown error'}`;
         if (response.details) {
@@ -1130,7 +1270,7 @@ const InstagramPage = () => {
   };
 
   // Check Google Drive availability
-  const checkGoogleDriveAvailability = useCallback(async () => {
+  const checkGoogleDriveAvailability = async () => {
     try {
       const status = await apiClient.getGoogleDriveStatus();
       setGoogleDriveAvailable(status.authenticated);
@@ -1138,7 +1278,7 @@ const InstagramPage = () => {
       console.error('Error checking Google Drive availability:', error);
       setGoogleDriveAvailable(false);
     }
-  }, []);
+  };
 
   // --- Logout ---
   const handleLogout = () => {
@@ -1150,48 +1290,30 @@ const InstagramPage = () => {
   };
 
   // Auto-Reply Functions
-  const loadAutoReplySettings = useCallback(async () => {
+  const loadAutoReplySettings = async () => {
     if (!selectedAccount) return;
     
     try {
       console.log('🔄 Loading auto-reply settings for Instagram account:', selectedAccount.platform_user_id, selectedAccount.username);
       
-      // First, automatically sync posts to ensure we have the latest data
-      console.log('🔄 Auto-syncing Instagram posts...');
-      const syncResponse = await apiClient.syncInstagramPosts(selectedAccount.platform_user_id);
-      
-      if (syncResponse.success) {
-        console.log('✅ Auto-sync completed:', syncResponse.data?.synced || 0, 'posts synced');
-      } else {
-        console.warn('⚠️ Auto-sync failed:', syncResponse.error);
-      }
-      
       // Get automation rules for Instagram auto-reply
-      const rules = await apiClient.getAutomationRules('instagram', 'AUTO_REPLY');
+      const rules = await apiClient.getAutomationRules('instagram', 'auto_reply');
       console.log('📋 Found automation rules:', rules);
       
-      // Get social accounts to match with the selected account
-      const socialAccounts = await apiClient.getSocialAccounts();
-      const instagramAccount = socialAccounts.find(acc => 
-        acc.platform === 'instagram' && acc.platform_user_id === selectedAccount.platform_user_id
+      // Find existing auto-reply rule for this account
+      const existingRule = rules.find(rule => 
+        rule.social_account_id === selectedAccount.id && 
+        rule.rule_type === 'AUTO_REPLY'
       );
       
-      if (instagramAccount) {
-        // Find existing auto-reply rule for this account
-        const existingRule = rules.find(rule => 
-          rule.social_account_id === instagramAccount.id && 
-          rule.rule_type === 'AUTO_REPLY'
-        );
-        
-        if (existingRule) {
-          setAutoReplyEnabled(existingRule.is_active);
-          setAutoReplyTemplate(existingRule.actions?.template || '');
-          console.log('✅ Found existing auto-reply rule:', existingRule);
-        } else {
-          setAutoReplyEnabled(false);
-          setAutoReplyTemplate('');
-          console.log('📝 No existing auto-reply rule found');
-        }
+      if (existingRule) {
+        setAutoReplyEnabled(existingRule.is_active);
+        setAutoReplyTemplate(existingRule.actions?.template || '');
+        console.log('✅ Found existing auto-reply rule:', existingRule);
+      } else {
+        setAutoReplyEnabled(false);
+        setAutoReplyTemplate('');
+        console.log('📝 No existing auto-reply rule found');
       }
       
       // Load posts for auto-reply selection
@@ -1200,19 +1322,69 @@ const InstagramPage = () => {
     } catch (error) {
       console.error('❌ Error loading auto-reply settings:', error);
       
-      // Provide more specific error messages
       let errorMessage = 'Failed to load auto-reply settings';
-      if (error.message.includes('404')) {
-        errorMessage = 'Instagram account not found. Please reconnect your Instagram account.';
-      } else if (error.message.includes('401')) {
-        errorMessage = 'Authentication failed. Please log in again.';
-      } else if (error.message.includes('500')) {
-        errorMessage = 'Server error. Please try again later.';
+      if (error.response?.data?.detail) {
+        errorMessage += ': ' + error.response.data.detail;
+      } else if (error.message) {
+        errorMessage += ': ' + error.message;
       }
       
       setMessage(errorMessage);
     }
-  }, [selectedAccount]);
+  };
+
+  // DM Auto-Reply Functions
+  const loadDmAutoReplySettings = async () => {
+    if (!selectedAccount) return;
+    try {
+      console.log('🔄 Loading DM auto-reply settings for Instagram account:', selectedAccount.platform_user_id, selectedAccount.username);
+      const statusResponse = await apiClient.getInstagramDmAutoReplyStatus(selectedAccount.platform_user_id);
+      console.log('📋 DM auto-reply status:', statusResponse);
+      if (statusResponse.success) {
+        setDmAutoReplyEnabled(statusResponse.enabled);
+        console.log('✅ DM auto-reply status loaded:', statusResponse.enabled);
+      } else {
+        setDmAutoReplyEnabled(false);
+        showToast('Failed to load DM auto-reply status: ' + (statusResponse.error || 'Unknown error'), 'error');
+        console.log('📝 No DM auto-reply status found');
+      }
+    } catch (error) {
+      setDmAutoReplyEnabled(false);
+      showToast('Error loading DM auto-reply settings: ' + (error?.message || 'Unknown error'), 'error');
+      console.error('❌ Error loading DM auto-reply settings:', error);
+    }
+  };
+
+  const handleDmAutoReplyToggle = async () => {
+    if (!selectedAccount) {
+      showToast('Please select an Instagram account first.', 'error');
+      return;
+    }
+    setDmAutoReplyLoading(true);
+    try {
+      const response = await apiClient.toggleInstagramDmAutoReply(
+        selectedAccount.platform_user_id,
+        !dmAutoReplyEnabled
+      );
+      if (response.success) {
+        setDmAutoReplyEnabled(!dmAutoReplyEnabled);
+        showToast(
+          !dmAutoReplyEnabled
+            ? 'Auto DM Reply enabled successfully!'
+            : 'Auto DM Reply disabled successfully.',
+          'success'
+        );
+      } else {
+        showToast('Failed to toggle Auto DM Reply: ' + (response.error || 'Unknown error'), 'error');
+        console.error('❌ Failed to toggle Auto DM Reply:', response);
+      }
+    } catch (error) {
+      showToast('Failed to toggle Auto DM Reply: ' + (error?.message || 'Unknown error'), 'error');
+      console.error('❌ Error toggling Auto DM Reply:', error);
+    } finally {
+      setDmAutoReplyLoading(false);
+    }
+  };
 
   const loadPostsForAutoReply = async () => {
     if (!selectedAccount) return;
@@ -1458,7 +1630,7 @@ const InstagramPage = () => {
       console.log('🔍 DEBUG: Loading auto-reply settings');
       loadAutoReplySettings();
     }
-  }, [selectedAccount, activeTab, loadAutoReplySettings]);
+  }, [selectedAccount, activeTab]);
 
   // Persist auto-reply state on page refresh
   useEffect(() => {
@@ -1466,7 +1638,7 @@ const InstagramPage = () => {
       // Re-validate auto-reply state with backend
       const validateAutoReplyState = async () => {
         try {
-          const rules = await apiClient.getAutomationRules('instagram', 'AUTO_REPLY');
+          const rules = await apiClient.getAutomationRules('instagram', 'auto_reply');
           const socialAccounts = await apiClient.getSocialAccounts();
           const instagramAccount = socialAccounts.find(acc => 
             acc.platform === 'instagram' && acc.platform_user_id === selectedAccount.platform_user_id
@@ -1498,6 +1670,71 @@ const InstagramPage = () => {
       loadUserMedia(selectedAccount.platform_user_id);
     }
   }, [selectedAccount, activeTab]);
+
+  // Load DM auto-reply settings when account is selected
+  useEffect(() => {
+    if (selectedAccount && activeTab === 'auto-reply') {
+      loadDmAutoReplySettings();
+    }
+  }, [selectedAccount, activeTab]);
+
+  // Add a useEffect to always load DM auto-reply settings when selectedAccount changes
+  useEffect(() => {
+    if (selectedAccount) {
+      loadDmAutoReplySettings();
+    }
+  }, [selectedAccount]);
+
+  // --- New: Scheduled Posts Grid State ---
+  const [scheduledGridRows, setScheduledGridRows] = useState([]);
+
+  // Show grid if redirected with scheduled posts
+  useEffect(() => {
+    if (location.state && location.state.scheduledGridRows) {
+      setScheduledGridRows(location.state.scheduledGridRows);
+    }
+  }, [location.state]);
+
+  // --- Auto-refresh scheduled posts grid ---
+  useEffect(() => {
+    let intervalId;
+    const fetchScheduledPosts = async () => {
+      try {
+        const posts = await apiClient.getScheduledPosts();
+        setScheduledGridRows(posts.filter(post => post.platform === 'instagram'));
+      } catch (err) {}
+    };
+    fetchScheduledPosts(); // Always fetch on mount
+    intervalId = setInterval(fetchScheduledPosts, 10000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // --- Content Grid Table ---
+  const renderScheduledGrid = () => (
+    <div className="scheduled-posts-grid">
+      <h3>Scheduled Instagram Posts</h3>
+      <table className="ig-table">
+        <thead>
+          <tr>
+            <th>Content</th>
+            <th>Scheduled Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(scheduledGridRows || []).map((post, idx) => (
+            <tr key={post.id || idx}>
+              <td title={post.prompt || ''}>
+                {(post.prompt || '').length > 120 ? (post.prompt || '').slice(0, 120) + '…' : (post.prompt || '')}
+              </td>
+              <td>{post.scheduled_datetime ? new Date(post.scheduled_datetime).toLocaleString() : '-'}</td>
+              <td className={`status-${post.status}`}>{post.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   // --- UI Render ---
   if (authLoading) {
@@ -1535,6 +1772,102 @@ const InstagramPage = () => {
           </div>
         </div>
       </div>
+      {/* --- Moved: Global Auto-Reply Section --- */}
+      {isConnected && selectedAccount && (
+        <div className="global-auto-reply-section" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+          padding: '18px 24px', marginBottom: 18, border: '1px solid #eee',
+          flexWrap: 'wrap', gap: 16
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', background: '#f3f3f3', border: '1px solid #e0e0e0' }}>
+              {selectedAccount.profile_picture_url ? (
+                <img src={selectedAccount.profile_picture_url} alt={selectedAccount.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <div style={{ width: '100%', height: '100%', background: '#eee' }} />
+              )}
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 18 }}>@{selectedAccount.username}</div>
+              <div style={{ color: '#888', fontSize: 14 }}>{selectedAccount.name}</div>
+              <div style={{ color: '#666', fontSize: 13, marginTop: 2 }}>
+                <span style={{ marginRight: 12 }}>
+                  <b>{selectedAccount.followers_count}</b> followers
+                </span>
+                <span>
+                  <b>{selectedAccount.media_count}</b> posts
+                </span>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              className="auto-reply-toggle-btn"
+              onClick={handleGlobalAutoReplyToggle}
+              disabled={globalAutoReplyLoading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600,
+                background: globalAutoReplyEnabled ? '#38c172' : '#e0e0e0',
+                color: globalAutoReplyEnabled ? '#fff' : '#444',
+                border: 'none', borderRadius: 20, padding: '10px 22px', fontSize: 16,
+                cursor: globalAutoReplyLoading ? 'not-allowed' : 'pointer',
+                boxShadow: globalAutoReplyEnabled ? '0 2px 8px rgba(56,193,114,0.08)' : 'none',
+                transition: 'background 0.2s'
+              }}
+            >
+              <span style={{
+                display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
+                background: globalAutoReplyEnabled ? '#2ecc40' : '#bbb',
+                marginRight: 6, border: globalAutoReplyEnabled ? '2px solid #fff' : '2px solid #ccc',
+                boxShadow: globalAutoReplyEnabled ? '0 0 4px #38c172' : 'none',
+                verticalAlign: 'middle',
+              }} />
+              Auto Reply: {globalAutoReplyEnabled ? 'Enabled' : 'Disabled'}
+              {globalAutoReplyLoading && (
+                <span className="loading-spinner" style={{ marginLeft: 10, width: 18, height: 18, border: '2px solid #fff', borderTop: '2px solid #38c172', borderRadius: '50%', display: 'inline-block', animation: 'spin 1s linear infinite' }} />
+              )}
+            </button>
+
+            {/* --- DM Auto-Reply Toggle Button --- */}
+            <button
+              className="auto-reply-toggle-btn"
+              onClick={handleDmAutoReplyToggle}
+              disabled={dmAutoReplyLoading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600,
+                background: dmAutoReplyEnabled ? '#38c172' : '#e0e0e0',
+                color: dmAutoReplyEnabled ? '#fff' : '#444',
+                border: 'none', borderRadius: 20, padding: '10px 22px', fontSize: 16,
+                cursor: dmAutoReplyLoading ? 'not-allowed' : 'pointer',
+                boxShadow: dmAutoReplyEnabled ? '0 2px 8px rgba(56,193,114,0.08)' : 'none',
+                transition: 'background 0.2s'
+              }}
+            >
+              <span style={{
+                display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
+                background: dmAutoReplyEnabled ? '#2ecc40' : '#bbb',
+                marginRight: 6, border: dmAutoReplyEnabled ? '2px solid #fff' : '2px solid #ccc',
+                boxShadow: dmAutoReplyEnabled ? '0 0 4px #38c172' : 'none',
+                verticalAlign: 'middle',
+              }} />
+              Auto DM Reply: {dmAutoReplyEnabled ? 'Enabled' : 'Disabled'}
+              {dmAutoReplyLoading && (
+                <span className="loading-spinner" style={{ marginLeft: 10, width: 18, height: 18, border: '2px solid #fff', borderTop: '2px solid #38c172', borderRadius: '50%', display: 'inline-block', animation: 'spin 1s linear infinite' }} />
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+      {/* --- Toast Notification --- */}
+      {toast.show && (
+        <div className={`toast-notification toast-${toast.type}`} style={{
+          position: 'fixed', top: 24, right: 24, zIndex: 9999, background: toast.type === 'success' ? '#38c172' : toast.type === 'error' ? '#e53e3e' : '#333',
+          color: '#fff', padding: '14px 28px', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.12)', fontWeight: 500, fontSize: 16
+        }}>
+          {toast.message}
+        </div>
+      )}
       {message && <div className="status-message info"><span className="message-text">{message}</span></div>}
       <div className="main-content">
         <div className="tab-navigation">
@@ -1553,6 +1886,15 @@ const InstagramPage = () => {
             Auto Reply
           </button>
           <button className={`tab-button ${activeTab === 'media' ? 'active' : ''}`} onClick={() => setActiveTab('media')} disabled={!isConnected || !selectedAccount}>Media Gallery</button>
+          <button 
+            className="tab-button bulk-composer-btn" 
+            onClick={() => setShowBulkComposer(true)} 
+            disabled={!isConnected || !selectedAccount}
+            style={{ backgroundColor: '#e4405f', color: 'white', border: 'none' }}
+          >
+            📅 Bulk Composer
+          </button>
+          <button className={`tab-button ${activeTab === 'scheduled-posts' ? 'active' : ''}`} onClick={() => setActiveTab('scheduled-posts')} disabled={!isConnected || !selectedAccount}>Scheduled Posts</button>
         </div>
         <div className="tab-content">
           {activeTab === 'connect' && (
@@ -2201,20 +2543,17 @@ const InstagramPage = () => {
                 )}
               </div>
             </div>
+
           )}
-          {activeTab === 'auto-reply' && !selectedAccount && (
-            <div style={{background: 'yellow', color: 'black', padding: '20px', margin: '10px'}}>
-              <h3>🔍 DEBUG: Auto-reply tab active but no selected account</h3>
-              <p>activeTab: {activeTab}</p>
-              <p>selectedAccount: {selectedAccount ? 'exists' : 'null'}</p>
-              <p>isConnected: {isConnected ? 'true' : 'false'}</p>
-            </div>
-          )}
+
           {activeTab === 'media' && selectedAccount && (
             <div className="media-section">
               <div className="media-header"><h2>Recent Posts</h2><p>Your latest Instagram content</p></div>
               {loadingMedia ? <div className="loading-media"><div className="loading-spinner"></div><p>Loading media...</p></div> : userMedia.length > 0 ? <div className="media-grid">{userMedia.slice(0, 12).map((media) => <div key={media.id} className="media-item"><div className="media-content">{media.media_type === 'IMAGE' ? <img src={media.media_url} alt="Instagram post" /> : media.media_type === 'VIDEO' ? <video controls><source src={media.media_url} type="video/mp4" /></video> : null}</div><div className="media-overlay"><div className="media-info"><p className="media-caption">{media.caption ? media.caption.substring(0, 100) + '...' : 'No caption'}</p><p className="media-date">{new Date(media.timestamp).toLocaleDateString()}</p></div></div></div>)}</div> : <div className="no-media"><h3>No Media Found</h3><p>No media found for this account. Start creating posts to see them here!</p></div>}
             </div>
+          )}
+          {activeTab === 'scheduled-posts' && (
+            <ScheduledPostHistory />
           )}
         </div>
               </div>
@@ -2349,21 +2688,6 @@ const InstagramPage = () => {
                         Not Available
             </div>
           )}
-                    {googleDriveAvailable && (
-                      <button 
-                        className="disconnect-drive-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          disconnectGoogleDrive();
-                        }}
-                        title="Disconnect Google Drive"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <line x1="18" y1="6" x2="6" y2="18"/>
-                          <line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                      </button>
-                    )}
         </div>
       </div>
               </div>
@@ -2381,6 +2705,36 @@ const InstagramPage = () => {
           </div>
         </div>
       )}
+
+      {/* Instagram Bulk Composer Modal */}
+      {showBulkComposer && (
+        <div className="modal-overlay" onClick={() => setShowBulkComposer(false)}>
+          <div className="modal-content bulk-composer-modal" onClick={(e) => e.stopPropagation()}>
+            <IgBulkComposer 
+              selectedAccount={selectedAccount} 
+              onClose={() => setShowBulkComposer(false)} 
+            />
+          </div>
+        </div>
+      )}
+      {globalAutoReplyEnabled && globalAutoReplyProgress && (
+        <div className="auto-reply-progress" style={{ margin: '16px 0', padding: '12px', background: '#f5f5f5', borderRadius: '8px' }}>
+          <p><strong>Auto-Reply Progress:</strong> {globalAutoReplyProgress.status}</p>
+          {globalAutoReplyProgress.status === 'processing' && (
+            <p>Processing post {globalAutoReplyProgress.current_post} of {globalAutoReplyProgress.total_posts}, comment {globalAutoReplyProgress.current_comment} of {globalAutoReplyProgress.total_comments}</p>
+          )}
+          {globalAutoReplyProgress.status === 'done' && <p>All comments processed!</p>}
+          {globalAutoReplyProgress.details && <p>{globalAutoReplyProgress.details}</p>}
+        </div>
+      )}
+      {apiError && (
+        <div className="api-error" style={{ color: 'red', margin: '12px 0' }}>
+          <p>Error: {apiError}</p>
+          <button onClick={() => { setApiError(null); setRetrying(true); setTimeout(() => { setRetrying(false); window.location.reload(); }, 500); }}>Retry</button>
+          {retrying && <span>Retrying...</span>}
+        </div>
+      )}
+      {scheduledGridRows.length > 0 && renderScheduledGrid()}
     </div>
   );
 };

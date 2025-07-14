@@ -11,6 +11,15 @@ import time
 import functools
 from cachetools import TTLCache
 
+# --- Instagram Auto-Reply Utilities ---
+from app.models.social_account import SocialAccount
+from app.database import get_db
+import threading
+
+# In-memory set for replied comment IDs (thread-safe)
+_replied_comment_ids = set()
+_replied_comment_ids_lock = threading.Lock()
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -542,3 +551,22 @@ class InstagramService:
 
 # Create a singleton instance
 instagram_service = InstagramService() 
+
+def get_access_token_for_user(instagram_user_id: str):
+    """Get the page access token for a given Instagram user ID from the SocialAccount table."""
+    db = next(get_db())
+    account = db.query(SocialAccount).filter_by(platform="instagram", platform_user_id=instagram_user_id).first()
+    if account and account.platform_data:
+        return account.platform_data.get("page_access_token")
+    return None
+
+async def has_auto_reply(comment_id: str) -> bool:
+    """Check if a comment has already been auto-replied to. (In-memory for demo; use DB for production)"""
+    with _replied_comment_ids_lock:
+        return comment_id in _replied_comment_ids
+
+async def mark_auto_replied(comment_id: str, instagram_user_id: str):
+    """Mark a comment as auto-replied. (In-memory for demo; use DB for production)"""
+    with _replied_comment_ids_lock:
+        _replied_comment_ids.add(comment_id)
+# NOTE: For production, implement persistent storage for replied comment IDs. 

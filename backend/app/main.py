@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.database import init_db, verify_db_connection
-from app.api import auth, social_media, ai, google_drive
+from app.api import auth, social_media, ai, google_drive, webhook
 import logging
 import asyncio
 import os
@@ -98,6 +98,14 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to start auto-reply scheduler: {e}")
 
+    # Start Instagram scheduler service
+    try:
+        from app.services.scheduler_service import scheduler_service
+        asyncio.create_task(scheduler_service.start())
+        logger.info("Instagram scheduler service started")
+    except Exception as e:
+        logger.error(f"Failed to start Instagram scheduler service: {e}")
+
     logger.info("Automation Dashboard API started successfully")
 
 
@@ -115,6 +123,14 @@ async def shutdown_event():
         logger.info("Bulk composer scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping bulk composer scheduler: {e}")
+
+    # Stop Instagram scheduler service
+    try:
+        from app.services.scheduler_service import scheduler_service
+        scheduler_service.stop()
+        logger.info("Instagram scheduler service stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Instagram scheduler service: {e}")
 
 
 # Health check endpoint
@@ -145,7 +161,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(social_media.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(google_drive.router)
-
+app.include_router(webhook.router, prefix="/api")
 
 
 # Error handlers
@@ -199,5 +215,4 @@ if __name__ == "__main__":
         logger.info("Server stopped by user")
     except Exception as e:
         logger.error(f"Server error: {e}")
-    finally:
-        logger.info("Server shutdown complete") 
+        sys.exit(1) 

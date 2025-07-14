@@ -255,7 +255,7 @@ class ApiClient {
 
   // Get Instagram media
   async getInstagramMedia(instagramUserId, limit = 25) {
-    return this.request(`/api/social/instagram/media/${instagramUserId}?limit=${limit}`);
+    return this.request(`/social/instagram/media/${instagramUserId}?limit=${limit}`);
   }
 
   // Upload image to Cloudinary for Instagram
@@ -264,7 +264,7 @@ class ApiClient {
     formData.append('file', file);
     
     // Use custom FormData upload method
-    const url = `${this.baseURL}/api/social/instagram/upload-image`;
+    const url = `${this.baseURL}/social/instagram/upload-image`;
     const config = {
       method: 'POST',
       body: formData,
@@ -330,7 +330,7 @@ class ApiClient {
     formData.append('file', file);
     
     // Use custom FormData upload method
-    const url = `${this.baseURL}/api/social/instagram/upload-video`;
+    const url = `${this.baseURL}/social/instagram/upload-video`;
     const config = {
       method: 'POST',
       body: formData,
@@ -510,7 +510,7 @@ class ApiClient {
     if (ruleType) params.append('rule_type', ruleType);
     
     const query = params.toString();
-    return this.request(`/api/social/automation-rules${query ? `?${query}` : ''}`);
+    return this.request(`/social/automation-rules${query ? `?${query}` : ''}`);
   }
 
   // Generate content using Groq API
@@ -643,6 +643,15 @@ class ApiClient {
     return response;
   }
 
+  // Bulk Composer - Schedule multiple posts for Instagram
+  async bulkScheduleInstagramPosts({ social_account_id, posts }) {
+    // Send social_account_id as a query param, posts as the body
+    return this.request(`/social/instagram/bulk-schedule?social_account_id=${encodeURIComponent(social_account_id)}`, {
+      method: 'POST',
+      body: JSON.stringify(posts),
+    });
+  }
+
   // Bulk Composer - Get scheduled posts
   async getBulkComposerContent(socialAccountId = null) {
     let endpoint = '/social/bulk-composer/content';
@@ -702,6 +711,35 @@ class ApiClient {
     return this.request('/social/linkedin/refresh-tokens', {
       method: 'POST',
     });
+  }
+
+  // Get Instagram DM auto-reply status
+  async getInstagramDmAutoReplyStatus(instagramUserId) {
+    return this.request(`/social/instagram/dm-auto-reply/status/${instagramUserId}`);
+  }
+
+  // Enable global Instagram auto-reply
+  async enableGlobalInstagramAutoReply(instagramUserId) {
+    return this.request(`/social/instagram/auto_reply/global/enable?instagram_user_id=${instagramUserId}`, {
+      method: 'POST'
+    });
+  }
+
+  // Disable global Instagram auto-reply
+  async disableGlobalInstagramAutoReply(instagramUserId) {
+    return this.request(`/social/instagram/auto_reply/global/disable?instagram_user_id=${instagramUserId}`, {
+      method: 'POST'
+    });
+  }
+
+  // Get global auto-reply status
+  async getGlobalInstagramAutoReplyStatus(instagramUserId) {
+    return this.request(`/social/instagram/auto_reply/global/status?instagram_user_id=${instagramUserId}`);
+  }
+
+  // Get global auto-reply progress
+  async getGlobalInstagramAutoReplyProgress(instagramUserId) {
+    return this.request(`/social/instagram/auto_reply/global/progress?instagram_user_id=${instagramUserId}`);
   }
 }
 
