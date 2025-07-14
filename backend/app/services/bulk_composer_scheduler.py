@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.bulk_composer_content import BulkComposerContent, BulkComposerStatus
@@ -43,7 +43,7 @@ class BulkComposerScheduler:
             db = next(get_db())
             
             # Find posts that are due to be published
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             logger.info(f"[DEBUG] Scheduler current UTC time: {now.isoformat()}")
             due_posts = db.query(BulkComposerContent).filter(
                 BulkComposerContent.status == BulkComposerStatus.SCHEDULED.value,
@@ -78,7 +78,7 @@ class BulkComposerScheduler:
             
             # Update publish attempt tracking
             post.publish_attempts += 1
-            post.last_publish_attempt = datetime.utcnow()
+            post.last_publish_attempt = datetime.now(timezone.utc)
             
             # Post to Facebook
             if post.media_file:
