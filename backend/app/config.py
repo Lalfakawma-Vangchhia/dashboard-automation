@@ -2,8 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List
 import os
+import dotenv
 
-
+dotenv.load_dotenv()
 class Settings(BaseSettings):
     # Database - PostgreSQL configuration
     database_url: str = os.getenv("DATABASE_URL")
@@ -27,6 +28,11 @@ class Settings(BaseSettings):
     # Instagram Integration
     instagram_app_id: str | None = os.getenv("INSTAGRAM_APP_ID")
     instagram_app_secret: str | None = os.getenv("INSTAGRAM_APP_SECRET")
+
+    # LinkedIn Integration
+    linkedin_client_id: str | None = os.getenv("LINKEDIN_CLIENT_ID")
+    linkedin_client_secret: str | None = os.getenv("LINKEDIN_CLIENT_SECRET")
+    linkedin_redirect_uri: str | None = os.getenv("LINKEDIN_REDIRECT_URI")
 
     # Groq AI Integration
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")

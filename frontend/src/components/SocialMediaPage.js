@@ -16,6 +16,10 @@ function SocialMediaPage() {
     navigate('/instagram');
   };
 
+  const handleLinkedInConnect = () => {
+    navigate('/linkedin');
+  };
+
   // Show login form if not authenticated with our system
   if (!authIsAuthenticated) {
     return (
@@ -66,6 +70,19 @@ function SocialMediaPage() {
       connectHandler: handleInstagramConnect,
       gradient: 'linear-gradient(135deg, #405DE6 0%, #5851DB 25%, #833AB4 50%, #C13584 75%, #E1306C 100%)',
       borderColor: '#E1306C'
+    },
+    {
+      id: 'linkedin',
+      name: 'LinkedIn',
+      description: 'Automate your LinkedIn posts and connections',
+      icon: (
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="#0077B5">
+          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 8.062H2.438V20.45H5.337V8.062zm1.929 0H4.366V20.45H7.265V8.062z"/>
+        </svg>
+      ),
+      connectHandler: handleLinkedInConnect,
+      gradient: 'linear-gradient(135deg, #0077B5 0%, #00A0DC 25%, #00C7C7 50%, #00E676 75%, #29FF95 100%)',
+      borderColor: '#0077B5'
     }
   ];
 

@@ -13,14 +13,17 @@ from app.schemas.social_media import (
     AutomationRuleCreate, AutomationRuleResponse, AutomationRuleUpdate,
     FacebookConnectRequest, FacebookPostRequest, AutoReplyToggleRequest,
     InstagramConnectRequest, InstagramPostRequest,
-    InstagramAutoReplyToggleRequest, SuccessResponse
+    InstagramAutoReplyToggleRequest, SuccessResponse,
+    LinkedInConnectRequest
 )
 from pydantic import BaseModel, Field, model_validator
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from app.services.instagram_service import instagram_service
 from app.services import cloudinary_service
 from uuid import uuid4
+from app.services.linkedin_service import LinkedInService
+import pytz
 
 
 # Request Models
@@ -3466,3 +3469,200 @@ async def debug_facebook_message_auto_reply_endpoint(
             "success": False,
             "error": str(e)
         }
+
+
+# LinkedIn Integration
+@router.get("/social/linkedin/status")
+async def get_linkedin_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get LinkedIn connection status."""
+    try:
+        linkedin_accounts = db.query(SocialAccount).filter(
+            SocialAccount.user_id == current_user.id,
+            SocialAccount.platform == "linkedin",
+            SocialAccount.is_connected == True
+        ).all()
+        
+        return {
+            "connected": len(linkedin_accounts) > 0,
+            "accounts": [{
+                "id": acc.platform_user_id,
+                "name": acc.display_name,
+                "profile_picture": acc.profile_picture_url,
+                "connected_at": acc.connected_at.isoformat() if acc.connected_at else None
+            } for acc in linkedin_accounts]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting LinkedIn status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get LinkedIn status: {str(e)}"
+        )
+
+
+@router.post("/social/linkedin/connect")
+async def connect_linkedin(
+    request: LinkedInConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Connect LinkedIn account."""
+    try:
+        from app.services.linkedin_service import linkedin_service
+        
+        logger.info(f"LinkedIn connect request for user {current_user.id}: {request.user_id}")
+        
+        # Validate the access token
+        validation_result = await linkedin_service.validate_access_token(request.access_token)
+        if not validation_result["valid"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid LinkedIn token: {validation_result.get('error')}"
+            )
+        
+        # Check if account already exists
+        existing_account = db.query(SocialAccount).filter(
+            SocialAccount.user_id == current_user.id,
+            SocialAccount.platform == "linkedin",
+            SocialAccount.platform_user_id == request.user_id
+        ).first()
+        
+        if existing_account:
+            # Update existing account
+            existing_account.access_token = request.access_token
+            existing_account.is_connected = True
+            existing_account.last_sync_at = datetime.utcnow()
+            existing_account.display_name = validation_result.get("name")
+            existing_account.profile_picture_url = validation_result.get("picture")
+            db.commit()
+            account = existing_account
+        else:
+            # Create new account
+            account = SocialAccount(
+                user_id=current_user.id,
+                platform="linkedin",
+                platform_user_id=request.user_id,
+                access_token=request.access_token,
+                account_type="personal",
+                display_name=validation_result.get("name"),
+                profile_picture_url=validation_result.get("picture"),
+                is_connected=True,
+                last_sync_at=datetime.utcnow()
+            )
+            db.add(account)
+            db.commit()
+            db.refresh(account)
+        
+        logger.info(f"LinkedIn account connected successfully: {account.id}")
+        
+        return {
+            "success": True,
+            "message": "LinkedIn account connected successfully",
+            "data": {
+                "account_id": account.id,
+                "user_id": request.user_id,
+                "name": validation_result.get("name"),
+                "profile_picture": validation_result.get("picture")
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error connecting LinkedIn account: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to connect LinkedIn account: {str(e)}"
+        )
+
+
+@router.post("/social/linkedin/disconnect")
+async def disconnect_linkedin(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Disconnect LinkedIn account."""
+    try:
+        linkedin_accounts = db.query(SocialAccount).filter(
+            SocialAccount.user_id == current_user.id,
+            SocialAccount.platform == "linkedin",
+            SocialAccount.is_connected == True
+        ).all()
+        
+        for account in linkedin_accounts:
+            account.is_connected = False
+            account.access_token = None
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"LinkedIn account(s) disconnected successfully ({len(linkedin_accounts)} accounts)"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error disconnecting LinkedIn account: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to disconnect LinkedIn account: {str(e)}"
+        )
+
+
+@router.post("/social/linkedin/refresh-tokens")
+async def refresh_linkedin_tokens(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Refresh LinkedIn access tokens."""
+    try:
+        from app.services.linkedin_service import linkedin_service
+        
+        linkedin_accounts = db.query(SocialAccount).filter(
+            SocialAccount.user_id == current_user.id,
+            SocialAccount.platform == "linkedin",
+            SocialAccount.is_connected == True
+        ).all()
+        
+        refreshed_count = 0
+        for account in linkedin_accounts:
+            if account.refresh_token:
+                refresh_result = await linkedin_service.refresh_access_token(account.refresh_token)
+                if refresh_result["success"]:
+                    account.access_token = refresh_result["access_token"]
+                    if refresh_result.get("refresh_token"):
+                        account.refresh_token = refresh_result["refresh_token"]
+                    refreshed_count += 1
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"LinkedIn tokens refreshed successfully ({refreshed_count}/{len(linkedin_accounts)} accounts)"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error refreshing LinkedIn tokens: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to refresh LinkedIn tokens: {str(e)}"
+        )
+
+@router.get("/social/linkedin/config")
+async def get_linkedin_config(
+    current_user: User = Depends(get_current_user)
+):
+    """Get LinkedIn configuration (Client ID and Redirect URI)."""
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        
+        return {
+            "client_id": settings.linkedin_client_id,
+            "redirect_uri": settings.linkedin_redirect_uri
+        }
+    except Exception as e:
+        logger.error(f"Error getting LinkedIn config: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get LinkedIn configuration: {str(e)}")

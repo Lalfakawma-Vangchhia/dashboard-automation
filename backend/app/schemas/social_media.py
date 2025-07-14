@@ -214,4 +214,25 @@ class InstagramAutoReplyToggleRequest(BaseModel):
     enabled: bool
     instagram_user_id: str
     response_template: Optional[str] = "Thank you for your comment! We'll get back to you soon."
-    selected_post_ids: Optional[List[int]] = Field(default=[], description="List of post IDs to enable auto-reply for") 
+    selected_post_ids: Optional[List[int]] = Field(default=[], description="List of post IDs to enable auto-reply for")
+
+
+# LinkedIn-specific schemas
+class LinkedInProfileInfo(BaseModel):
+    id: str
+    firstName: str
+    lastName: str
+    profilePicture: Optional[str] = None
+
+
+class LinkedInConnectRequest(BaseModel):
+    access_token: str
+    user_id: str
+    profile: LinkedInProfileInfo
+
+
+class LinkedInPostRequest(BaseModel):
+    profile_id: str
+    content: str
+    post_type: str = "post-auto"
+    image_url: Optional[str] = None 

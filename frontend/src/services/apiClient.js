@@ -48,19 +48,19 @@ class ApiClient {
         '/instagram/post-carousel',  // Add Instagram carousel endpoint
         '/social/instagram/upload-video',  // Add video upload endpoint
         '/social/instagram/upload-image',  // Add image upload endpoint
-        '/api/social/instagram/upload-video',  // Alternative video upload path
-        '/api/social/instagram/upload-image',   // Alternative image upload path
-        '/api/social/instagram/generate-carousel',  // AI carousel generation
-        '/api/social/instagram/generate-image',     // AI image generation
-        '/api/social/instagram/generate-caption',   // AI caption generation
-        '/api/social/facebook/generate-image',      // Facebook AI image generation
-        '/api/ai/generate-content',                 // General AI content generation
-        '/api/social/instagram/create-post',        // Instagram post creation
-        '/api/social/facebook/create-post',         // Facebook post creation
-        '/api/social/instagram/post-carousel',      // Instagram carousel posting
-        '/api/social/instagram/post',               // Instagram post endpoint
-        '/api/social/facebook/post',                // Facebook post endpoint
-        '/api/ai/',                                 // All AI endpoints
+        '/social/instagram/upload-video',  // Alternative video upload path
+        '/social/instagram/upload-image',   // Alternative image upload path
+        '/social/instagram/generate-carousel',  // AI carousel generation
+        '/social/instagram/generate-image',     // AI image generation
+        '/social/instagram/generate-caption',   // AI caption generation
+        '/social/facebook/generate-image',      // Facebook AI image generation
+        '/ai/generate-content',                 // General AI content generation
+        '/social/instagram/create-post',        // Instagram post creation
+        '/social/facebook/create-post',         // Facebook post creation
+        '/social/instagram/post-carousel',      // Instagram carousel posting
+        '/social/instagram/post',               // Instagram post endpoint
+        '/social/facebook/post',                // Facebook post endpoint
+        '/ai/',                                 // All AI endpoints
         '/generate',                                // Any generation endpoint
         '/carousel',                                // Carousel operations
         '/upload'                                   // Upload operations
@@ -171,14 +171,14 @@ class ApiClient {
 
   // Authentication endpoints
   async register(userData) {
-    return this.request('/api/auth/register', {
+    return this.request('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
   }
 
   async login(email, password) {
-    const response = await this.request('/api/auth/login', {
+    const response = await this.request('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
@@ -191,37 +191,37 @@ class ApiClient {
   }
 
   async getCurrentUser() {
-    return this.request('/api/auth/me');
+    return this.request('/auth/me');
   }
 
   async logout() {
     this.setToken(null);
   }
 
-  // Social Media endpoints (Replace Make.com webhooks)
+  // Facebook endpoints
   async getFacebookStatus() {
-    return this.request('/api/social/facebook/status');
+    return this.request('/social/facebook/status');
   }
 
   async connectFacebook(accessToken, userId, pages = []) {
-    return this.request('/api/social/facebook/connect', {
+    return this.request('/social/facebook/connect', {
       method: 'POST',
       body: JSON.stringify({
         access_token: accessToken,
         user_id: userId,
-        pages: pages,
+        pages: pages
       }),
     });
   }
 
   async refreshFacebookTokens() {
-    return this.request('/api/social/facebook/refresh-tokens', {
+    return this.request('/social/facebook/refresh-tokens', {
       method: 'POST',
     });
   }
 
   async logoutFacebook() {
-    return this.request('/api/social/facebook/logout', {
+    return this.request('/social/facebook/logout', {
       method: 'POST',
     });
   }
@@ -238,7 +238,7 @@ class ApiClient {
   }
 
   async connectInstagram(accessToken) {
-    return this.request('/api/social/instagram/connect', {
+    return this.request('/social/instagram/connect', {
       method: 'POST',
       body: JSON.stringify({
         access_token: accessToken
@@ -246,73 +246,11 @@ class ApiClient {
     });
   }
 
-
-
-  // Instagram post creation
   async createInstagramPost(data) {
-    // Accept either FormData or an object for flexibility
-    if (data instanceof FormData) {
-      // FormData for file uploads - use custom headers to avoid CORS issues
-      const url = `${this.baseURL}/api/social/instagram/post`;
-      const config = {
-        method: 'POST',
-        body: data,
-      };
-
-      // Add authorization header manually for FormData
-      if (this.token) {
-        config.headers = {
-          'Authorization': `Bearer ${this.token}`
-        };
-      }
-
-      try {
-        console.log(`🔍 DEBUG: FormData upload to ${url}`);
-        const response = await fetch(url, config);
-        
-        if (!response.ok) {
-          let errorData = {};
-          try {
-            errorData = await response.json();
-          } catch (e) {
-            console.warn('Failed to parse error response as JSON');
-          }
-          
-          let errorMessage = 'Unknown error occurred';
-          if (typeof errorData === 'string') {
-            errorMessage = errorData;
-          } else if (errorData.error) {
-            errorMessage = errorData.error;
-          } else if (errorData.detail) {
-            errorMessage = errorData.detail;
-          } else {
-            errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-          }
-          
-          throw new Error(errorMessage);
-        }
-
-        const responseData = await response.json();
-        console.log(`FormData upload response:`, responseData);
-        return responseData;
-      } catch (error) {
-        console.error(`FormData upload error:`, error);
-        throw error;
-      }
-    } else {
-      // JSON for text-only posts or AI generation
-      return this.request('/api/social/instagram/post', {
-        method: 'POST',
-        body: JSON.stringify({
-          instagram_user_id: data.instagram_user_id,
-          caption: data.caption,
-          image_url: data.image_url,
-          post_type: data.post_type || 'manual',
-          use_ai: data.use_ai || false,
-          prompt: data.prompt
-        }),
-      });
-    }
+    return this.request('/social/instagram/post', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // Get Instagram media
@@ -453,36 +391,34 @@ class ApiClient {
   }
 
   async getGoogleDriveAuth() {
-    return this.request('/api/google-drive/auth');
+    return this.request('/google-drive/auth');
   }
 
   async getGoogleDriveStatus() {
-    return this.request('/api/google-drive/status');
+    return this.request('/google-drive/status');
   }
 
   async getGoogleDriveAuthorizeUrl() {
-    return this.request('/api/google-drive/authorize');
+    return this.request('/google-drive/authorize');
   }
 
   async getGoogleDriveToken() {
-    const response = await this.request('/api/google-drive/token');
-    return {
-      access_token: response.access_token
-    };
+    const response = await this.request('/google-drive/token');
+    return response;
   }
 
   async disconnectGoogleDrive() {
-    return this.request('/api/google-drive/disconnect', {
-      method: 'POST'
+    return this.request('/google-drive/disconnect', {
+      method: 'POST',
     });
   }
 
   // Generate Instagram image using Stability AI
   async generateInstagramImage(imagePrompt, postType = 'feed') {
-    return this.request('/api/social/instagram/generate-image', {
+    return this.request('/social/instagram/generate-image', {
       method: 'POST',
       body: JSON.stringify({
-        image_prompt: imagePrompt,
+        prompt: imagePrompt,
         post_type: postType
       }),
     });
@@ -490,64 +426,48 @@ class ApiClient {
 
   // Unified Instagram post creation endpoint
   async createUnifiedInstagramPost(instagramUserId, options = {}) {
-    const {
-      caption = null,
-      content_prompt = null,
-      image_prompt = null,
-      image_url = null,
-      image_filename = null,
-      video_url = null,
-      video_filename = null,
-      post_type = 'feed',
-      use_ai_text = false,
-      use_ai_image = false,
-      media_type = 'image'
-    } = options;
-
-    return this.request('/api/social/instagram/create-post', {
+    return this.request('/social/instagram/create-post', {
       method: 'POST',
       body: JSON.stringify({
         instagram_user_id: instagramUserId,
-        caption: caption,
-        content_prompt: content_prompt,
-        image_prompt: image_prompt,
-        image_url: image_url,
-        image_filename: image_filename,
-        video_url: video_url,
-        video_filename: video_filename,
-        post_type: post_type,
-        use_ai_text: use_ai_text,
-        use_ai_image: use_ai_image,
-        media_type: media_type
+        caption: options.caption,
+        image_url: options.image_url,
+        post_type: options.post_type || 'manual',
+        use_ai: options.use_ai || false,
+        prompt: options.prompt,
+        carousel_images: options.carousel_images || [],
+        video_url: options.video_url,
+        location: options.location,
+        hashtags: options.hashtags
       }),
     });
   }
 
   // REPLACE Make.com auto-reply webhook
   async toggleAutoReply(pageId, enabled, responseTemplate = 'Thank you for your comment!', selectedPostIds = []) {
-    return this.request('/api/social/facebook/auto-reply', {
+    return this.request('/social/facebook/auto-reply', {
       method: 'POST',
       body: JSON.stringify({
-        enabled: enabled,
         page_id: pageId,
+        enabled: enabled,
         response_template: responseTemplate,
-        selected_post_ids: selectedPostIds,
+        selected_post_ids: selectedPostIds
       }),
     });
   }
 
   // Get posts for auto-reply selection
   async getPostsForAutoReply(pageId) {
-    return this.request(`/social/facebook/posts-for-auto-reply/${pageId}`);
+    return this.request(`/social/facebook/posts-for-auto-reply?page_id=${pageId}`);
   }
 
   // Instagram Auto-Reply Methods
   async toggleInstagramAutoReply(instagramUserId, enabled, responseTemplate = 'Thank you for your comment!', selectedPostIds = []) {
-    return this.request('/api/social/instagram/auto-reply', {
+    return this.request('/social/instagram/auto-reply', {
       method: 'POST',
       body: JSON.stringify({
-        enabled,
         instagram_user_id: instagramUserId,
+        enabled: enabled,
         response_template: responseTemplate,
         selected_post_ids: selectedPostIds
       }),
@@ -555,18 +475,21 @@ class ApiClient {
   }
 
   async getInstagramPostsForAutoReply(instagramUserId) {
-    return this.request(`/api/social/instagram/posts-for-auto-reply/${instagramUserId}`);
+    return this.request(`/social/instagram/posts-for-auto-reply?instagram_user_id=${instagramUserId}`);
   }
 
   async syncInstagramPosts(instagramUserId) {
-    return this.request(`/api/social/instagram/sync-posts/${instagramUserId}`, {
+    return this.request('/social/instagram/sync-posts', {
       method: 'POST',
+      body: JSON.stringify({
+        instagram_user_id: instagramUserId
+      }),
     });
   }
 
   // Get connected social accounts
   async getSocialAccounts() {
-    return this.request('/api/social/accounts');
+    return this.request('/social/accounts');
   }
 
   // Get posts
@@ -592,150 +515,99 @@ class ApiClient {
 
   // Generate content using Groq API
   async generateContent(prompt) {
-    return this.request('/api/ai/generate-content', {
+    return this.request('/ai/generate-content', {
       method: 'POST',
       body: JSON.stringify({
-        prompt: prompt,
-        platform: 'instagram',
-        content_type: 'caption'
+        prompt: prompt
       }),
     });
   }
 
   async generateInstagramCaption(prompt) {
-    try {
-      console.log('Generating Instagram caption with prompt:', prompt);
-      
-      const response = await this.request('/api/social/instagram/generate-caption', {
-        method: 'POST',
-        body: JSON.stringify({ prompt })
-      });
-      
-      console.log('Instagram caption generation response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error generating Instagram caption:', error);
-      throw error;
-    }
+    const response = await this.request('/social/instagram/generate-caption', {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: prompt
+      }),
+    });
+    return response;
   }
 
   async generateCaptionWithStrategy(customStrategy, context = "", maxLength = 2000) {
-    try {
-      console.log('Generating caption with custom strategy:', { customStrategy, context, maxLength });
-      
-      const response = await this.request('/api/social/generate-caption-with-strategy', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          custom_strategy: customStrategy,
-          context: context,
-          max_length: maxLength
-        })
-      });
-      
-      console.log('Custom strategy caption generation response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error generating caption with custom strategy:', error);
-      throw error;
-    }
+    const response = await this.request('/social/generate-caption-with-strategy', {
+      method: 'POST',
+      body: JSON.stringify({
+        custom_strategy: customStrategy,
+        context: context,
+        max_length: maxLength
+      }),
+    });
+    return response;
   }
 
   async generateBulkCaptions(customStrategy, contexts, maxLength = 2000) {
-    try {
-      console.log('Generating bulk captions with custom strategy:', { customStrategy, contexts, maxLength });
-      
-      const response = await this.request('/api/social/generate-bulk-captions', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          custom_strategy: customStrategy,
-          contexts: contexts,
-          max_length: maxLength
-        })
-      });
-      
-      console.log('Bulk caption generation response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error generating bulk captions:', error);
-      throw error;
-    }
+    const response = await this.request('/social/generate-bulk-captions', {
+      method: 'POST',
+      body: JSON.stringify({
+        custom_strategy: customStrategy,
+        contexts: contexts,
+        max_length: maxLength
+      }),
+    });
+    return response;
   }
 
   // Generate Instagram carousel
   async generateInstagramCarousel(prompt, count = 3) {
-    try {
-      const response = await this.request('/api/social/instagram/generate-carousel', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          image_prompt: prompt,
-          count: count,
-          post_type: 'feed'
-        })
-      });
-      return response;
-    } catch (error) {
-      console.error('Error generating Instagram carousel:', error);
-      throw error;
-    }
+    const response = await this.request('/social/instagram/generate-carousel', {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: prompt,
+        count: count
+      }),
+    });
+    return response;
   }
 
   // Post Instagram carousel
   async postInstagramCarousel(instagramUserId, caption, imageUrls) {
-    try {
-      const response = await this.request('/api/social/instagram/post-carousel', {
-        method: 'POST',
-        body: JSON.stringify({
-          instagram_user_id: instagramUserId,
-          caption: caption,
-          image_urls: imageUrls
-        })
-      });
-      return response;
-    } catch (error) {
-      console.error('Error posting Instagram carousel:', error);
-      throw error;
-    }
+    const response = await this.request('/social/instagram/post-carousel', {
+      method: 'POST',
+      body: JSON.stringify({
+        instagram_user_id: instagramUserId,
+        caption: caption,
+        image_urls: imageUrls
+      }),
+    });
+    return response;
   }
 
   // Unified Facebook post creation endpoint
   async createFacebookPost(pageId, options = {}) {
-    const {
-      textContent = null,
-      contentPrompt = null,
-      imagePrompt = null,
-      imageUrl = null,
-      imageFilename = null,
-      videoUrl = null,
-      videoFilename = null,
-      postType = 'feed',
-      useAIText = false,
-      useAIImage = false
-    } = options;
-
-    return this.request('/api/social/facebook/create-post', {
+    return this.request('/social/facebook/create-post', {
       method: 'POST',
       body: JSON.stringify({
         page_id: pageId,
-        text_content: textContent,
-        content_prompt: contentPrompt,
-        image_prompt: imagePrompt,
-        image_url: imageUrl,
-        image_filename: imageFilename,
-        video_url: videoUrl,
-        video_filename: videoFilename,
-        post_type: postType,
-        use_ai_text: useAIText,
-        use_ai_image: useAIImage
+        message: options.message,
+        image_url: options.image_url,
+        post_type: options.post_type || 'feed',
+        use_ai: options.use_ai || false,
+        prompt: options.prompt,
+        scheduled_time: options.scheduled_time,
+        carousel_images: options.carousel_images || [],
+        video_url: options.video_url,
+        location: options.location,
+        hashtags: options.hashtags
       }),
     });
   }
 
   // Stability AI Image Generation endpoint (standalone)
   async generateFacebookImage(imagePrompt, postType = 'feed') {
-    return this.request('/api/social/facebook/generate-image', {
+    return this.request('/social/facebook/generate-image', {
       method: 'POST',
       body: JSON.stringify({
-        image_prompt: imagePrompt,
+        prompt: imagePrompt,
         post_type: postType
       }),
     });
@@ -743,17 +615,17 @@ class ApiClient {
 
   // Get AI service status including Stability AI
   async getAIServiceStatus() {
-    return this.request('/api/ai/status');
+    return this.request('/ai/status');
   }
 
   // Debug endpoint for Stability AI troubleshooting
   async debugStabilityAI() {
-    return this.request('/api/social/debug/stability-ai-status');
+    return this.request('/social/debug/stability-ai-status');
   }
 
   // Debug endpoint for testing Facebook image posts
   async debugFacebookImagePost(pageId, message = "Test post from debug") {
-    return this.request('/api/social/facebook/debug-image-post', {
+    return this.request('/social/facebook/debug-image-post', {
       method: 'POST',
       body: JSON.stringify({
         page_id: pageId,
@@ -764,72 +636,72 @@ class ApiClient {
 
   // Bulk Composer - Schedule multiple posts
   async bulkSchedulePosts(requestData) {
-    try {
-      console.log('Scheduling bulk posts:', requestData);
-      
-      const response = await this.request('/api/social/bulk-composer/schedule', {
-        method: 'POST',
-        body: JSON.stringify(requestData)
-      });
-      
-      console.log('Bulk schedule response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error scheduling bulk posts:', error);
-      throw error;
-    }
+    const response = await this.request('/social/bulk-composer/schedule', {
+      method: 'POST',
+      body: JSON.stringify(requestData),
+    });
+    return response;
   }
 
   // Bulk Composer - Get scheduled posts
   async getBulkComposerContent(socialAccountId = null) {
-    try {
-      console.log('Getting bulk composer content...');
-      let endpoint = '/api/social/bulk-composer/content';
-      if (socialAccountId) {
-        endpoint += `?social_account_id=${socialAccountId}`;
-      }
-      const response = await this.request(endpoint);
-      console.log('Bulk composer content response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error getting bulk composer content:', error);
-      throw error;
+    let endpoint = '/social/bulk-composer/content';
+    if (socialAccountId) {
+      endpoint += `?social_account_id=${socialAccountId}`;
     }
+    return this.request(endpoint);
   }
 
   // Bulk Composer - Update post caption
   async updateBulkComposerPost(postId, caption) {
-    try {
-      console.log('Updating bulk composer post:', postId, caption);
-      
-      const response = await this.request(`/api/social/bulk-composer/content/${postId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ caption })
-      });
-      
-      console.log('Update post response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error updating bulk composer post:', error);
-      throw error;
-    }
+    return this.request(`/social/bulk-composer/content/${postId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        caption: caption
+      }),
+    });
   }
 
   // Bulk Composer - Cancel/delete scheduled post
   async cancelBulkComposerPost(postId) {
-    try {
-      console.log('Canceling bulk composer post:', postId);
-      
-      const response = await this.request(`/api/social/bulk-composer/content/${postId}`, {
-        method: 'DELETE'
-      });
-      
-      console.log('Cancel post response:', response);
-      return response;
-    } catch (error) {
-      console.error('Error canceling bulk composer post:', error);
-      throw error;
-    }
+    return this.request(`/social/bulk-composer/content/${postId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // LinkedIn endpoints
+  async getLinkedInStatus() {
+    return this.request('/social/linkedin/status');
+  }
+
+  async getLinkedInConfig() {
+    return this.request('/social/linkedin/config');
+  }
+
+  async connectLinkedIn(data) {
+    return this.request('/social/linkedin/connect', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async exchangeLinkedInCode(code) {
+    return this.request('/social/linkedin/exchange-code', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  async disconnectLinkedIn() {
+    return this.request('/social/linkedin/disconnect', {
+      method: 'POST',
+    });
+  }
+
+  async refreshLinkedInTokens() {
+    return this.request('/social/linkedin/refresh-tokens', {
+      method: 'POST',
+    });
   }
 }
 

@@ -117,6 +117,11 @@ FACEBOOK_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 INSTAGRAM_APP_ID=123456789012345
 INSTAGRAM_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+# === LinkedIn ===
+LINKEDIN_CLIENT_ID=xxxxxxxxxxxxxxxxxx
+LINKEDIN_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LINKEDIN_REDIRECT_URI=http://localhost:3000/linkedin
+
 # === Groq ===
 GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 STABILITY_API_KEY=sk-kn2PmBtRQ6hsHOuuUatdQHrwD27JIZYgeTUjRI2orxM1PM8b
@@ -143,8 +148,9 @@ CLOUDINARY_API_KEY=XXXXXXXXXXX
 
 ## Social-media OAuth configuration
 
-Facebook & Instagram will refuse login with the error **"Feature Unavailable: Facebook Login is currently unavailable for this app"** unless each user is authorised.  Follow these steps **for every teammate or test account**:
+Facebook, Instagram, and LinkedIn will refuse login with the error **"Feature Unavailable: Facebook Login is currently unavailable for this app"** unless each user is authorised.  Follow these steps **for every teammate or test account**:
 
+### Facebook & Instagram Setup:
 1. **Facebook Developer Portal** → Your App → *Roles*.
    * Under **Testers**, click *Add* and enter your colleague's Facebook account email/username.
    * They will receive an invitation – they **must accept** it.
@@ -152,12 +158,26 @@ Facebook & Instagram will refuse login with the error **"Feature Unavailable: Fa
 3. Keep the app in **Development** mode while testing, or complete Facebook App Review if you need **Live** mode.
 4. Ensure your Valid OAuth Redirect URIs match your local backend, e.g.
    * `http://localhost:8000/api/auth/facebook/callback`
-5. After the tester accepts the invite, have them log out & log back in – the OAuth dialog will appear normally.
+
+### LinkedIn Setup:
+1. **LinkedIn Developer Portal** → Your App → *Auth*.
+   * Add your redirect URI: `http://localhost:3000/linkedin/callback`
+   * Request the following OAuth 2.0 scopes:
+     - `r_liteprofile` (Read basic profile)
+     - `r_emailaddress` (Read email address)
+     - `w_member_social` (Write posts)
+2. Keep the app in **Development** mode while testing.
+3. Add test users in the *Testers* section if needed.
+
+### General Notes:
+- After the tester accepts the invite, have them log out & log back in – the OAuth dialog will appear normally.
+- For LinkedIn, users will be redirected to LinkedIn's OAuth page and then back to your application.
 
 > If you still see "Feature Unavailable", double-check that:
 > * The tester accepted the invitation (check under *Roles* → *Testers* → *Invited* vs *Added*).
 > * The Facebook account you're using matches the invited email.
 > * The app is not in Live mode without required approvals.
+> * For LinkedIn, verify the redirect URI matches exactly and the app is in Development mode.
 
 ---
 

@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const SocialMediaPage = lazy(() => import('./components/SocialMediaPage'));
 const FacebookPage = lazy(() => import('./components/FacebookPage'));
 const InstagramPage = lazy(() => import('./components/InstagramPage'));
+const LinkedInPage = lazy(() => import('./components/LinkedInPage'));
 
 // Loading component
 const LoadingSpinner = () => (
@@ -114,6 +115,11 @@ function AppContent() {
             <Route path="/instagram" element={
               <Suspense fallback={<LoadingSpinner />}>
                 <InstagramPage />
+              </Suspense>
+            } />
+            <Route path="/linkedin" element={
+              <Suspense fallback={<LoadingSpinner />}>
+                <LinkedInPage />
               </Suspense>
             } />
 

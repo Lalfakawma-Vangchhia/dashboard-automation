@@ -5,5 +5,12 @@
     "@emotion/styled": "^11.14.1",
     "framer-motion": "^12.23.0",
     "react-icons": "^5.5.0"
+  },
+  "scripts": {
+    "setup-https": "cd frontend && npm run generate-certs && cd .. && node copy-certificates.js",
+    "start-frontend-https": "cd frontend && npm run start-dev-https",
+    "start-backend-https": "cd backend && python run_https.py",
+    "start-https": "npm run setup-https && npm run start-backend-https",
+    "dev-https": "npm run setup-https && concurrently \"npm run start-backend-https\" \"npm run start-frontend-https\""
   }
 }
