@@ -15,6 +15,26 @@ const promptTemplates = [
   { id: 6, name: 'Custom', prompt: 'custom' }
 ];
 
+// Utility function to convert UTC time to local time for display
+const utcToLocalTime = (utcTime) => {
+  const [hours, minutes] = utcTime.split(':');
+  const date = new Date();
+  date.setUTCHours(parseInt(hours), parseInt(minutes), 0, 0);
+  return date.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    hour12: false 
+  });
+};
+
+// Utility function to convert local time to UTC for backend
+const localToUtcTime = (localTime) => {
+  const [hours, minutes] = localTime.split(':');
+  const date = new Date();
+  date.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+  return date.toTimeString().slice(0, 5);
+};
+
 function BulkComposer({ selectedPage, onClose }) {
 
   const { user, isAuthenticated } = useAuth();
@@ -85,14 +105,14 @@ function BulkComposer({ selectedPage, onClose }) {
   const generateInitialRows = useCallback(() => {
     if (!strategyData.startDate) return;
     
-    // Create dates in local timezone to avoid timezone issues
+    // Create dates in UTC to match backend scheduler
     const startDateParts = strategyData.startDate.split('-');
-    const startDate = new Date(parseInt(startDateParts[0]), parseInt(startDateParts[1]) - 1, parseInt(startDateParts[2]));
+    const startDate = new Date(Date.UTC(parseInt(startDateParts[0]), parseInt(startDateParts[1]) - 1, parseInt(startDateParts[2])));
     
     let endDate = null;
     if (strategyData.endDate) {
       const endDateParts = strategyData.endDate.split('-');
-      endDate = new Date(parseInt(endDateParts[0]), parseInt(endDateParts[1]) - 1, parseInt(endDateParts[2]));
+      endDate = new Date(Date.UTC(parseInt(endDateParts[0]), parseInt(endDateParts[1]) - 1, parseInt(endDateParts[2])));
     }
     
     const rows = [];
@@ -103,9 +123,9 @@ function BulkComposer({ selectedPage, onClose }) {
 
     // If no end date is provided, only schedule the start date (single day)
     if (!endDate) {
-      const formattedDate = startDate.getFullYear() + '-' + 
-        String(startDate.getMonth() + 1).padStart(2, '0') + '-' + 
-        String(startDate.getDate()).padStart(2, '0');
+      const formattedDate = startDate.getUTCFullYear() + '-' + 
+        String(startDate.getUTCMonth() + 1).padStart(2, '0') + '-' + 
+        String(startDate.getUTCDate()).padStart(2, '0');
       
       rows.push({
         id: `row-0`,
@@ -139,11 +159,11 @@ function BulkComposer({ selectedPage, onClose }) {
             break;
           case 'weekly':
             // Check if it's the same day of the week as start date
-            shouldInclude = currentDate.getDay() === startDate.getDay();
+            shouldInclude = currentDate.getUTCDay() === startDate.getUTCDay();
             break;
           case 'monthly':
             // Check if it's the same day of the month as start date
-            shouldInclude = currentDate.getDate() === startDate.getDate();
+            shouldInclude = currentDate.getUTCDate() === startDate.getUTCDate();
             break;
           case 'custom':
             // For custom cron, include every day for now
@@ -154,10 +174,10 @@ function BulkComposer({ selectedPage, onClose }) {
         }
 
         if (shouldInclude) {
-          // Format date consistently in YYYY-MM-DD format
-          const formattedDate = currentDate.getFullYear() + '-' + 
-            String(currentDate.getMonth() + 1).padStart(2, '0') + '-' + 
-            String(currentDate.getDate()).padStart(2, '0');
+          // Format date consistently in YYYY-MM-DD format using UTC
+          const formattedDate = currentDate.getUTCFullYear() + '-' + 
+            String(currentDate.getUTCMonth() + 1).padStart(2, '0') + '-' + 
+            String(currentDate.getUTCDate()).padStart(2, '0');
           
           rows.push({
             id: `row-${rowCount}`,
@@ -172,8 +192,8 @@ function BulkComposer({ selectedPage, onClose }) {
           rowCount++;
         }
 
-        // Move to next day
-        currentDate.setDate(currentDate.getDate() + 1);
+        // Move to next day in UTC
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
         dayCount++;
       }
     }
@@ -770,15 +790,23 @@ function BulkComposer({ selectedPage, onClose }) {
                 throw new Error(`Failed to fetch image: ${response.status}`);
               }
               const blob = await response.blob();
-              mediaFile = await new Promise((resolve) => {
+              mediaFile = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.onerror = () => resolve(null);
+                reader.onloadend = () => {
+                  if (reader.result) {
+                    resolve(reader.result);
+                  } else {
+                    reject(new Error('Failed to convert image to base64'));
+                  }
+                };
+                reader.onerror = () => reject(new Error('FileReader error'));
                 reader.readAsDataURL(blob);
               });
               console.log('Converted generated image to base64 for row:', row.id);
             } catch (error) {
               console.error('Error converting generated image to base64:', error);
+              // Don't fail the entire post if image conversion fails
+              mediaFile = null;
             }
           }
           
@@ -790,10 +818,19 @@ function BulkComposer({ selectedPage, onClose }) {
             media_filename: row.mediaFile ? row.mediaFile.name : (row.mediaPreview ? 'generated_image.jpg' : null)
           };
           
+          // Validate that the scheduled datetime is in the future
+          const scheduledDateTime = new Date(`${postData.scheduled_date}T${postData.scheduled_time}:00Z`);
+          const now = new Date();
+          if (scheduledDateTime <= now) {
+            console.warn(`Post for row ${row.id} is scheduled in the past:`, scheduledDateTime);
+            // You might want to skip this post or show a warning
+          }
+          
           console.log('Prepared post data for row:', row.id, {
             caption: postData.caption?.substring(0, 50) + '...',
             scheduled_date: postData.scheduled_date,
             scheduled_time: postData.scheduled_time,
+            scheduled_datetime_utc: scheduledDateTime.toISOString(),
             has_media: !!postData.media_file,
             media_filename: postData.media_filename
           });
@@ -821,6 +858,13 @@ function BulkComposer({ selectedPage, onClose }) {
           media_filename: requestPayload.posts[0].media_filename
         } : 'No posts'
       });
+
+      // Additional debugging for timezone handling
+      console.log('=== Timezone Debug Info ===');
+      console.log('Current UTC time:', new Date().toISOString());
+      console.log('Current local time:', new Date().toString());
+      console.log('Sample post scheduled datetime:', postsWithMedia[0] ? 
+        new Date(`${postsWithMedia[0].scheduled_date}T${postsWithMedia[0].scheduled_time}:00Z`).toISOString() : 'No posts');
 
       // Send the bulk schedule request
       const response = await apiClient.bulkSchedulePosts(requestPayload);
@@ -1159,13 +1203,16 @@ function BulkComposer({ selectedPage, onClose }) {
 
                 {/* Time Slot should be just below End Date */}
                 <div className="form-group">
-                  <label>Time Slot</label>
+                  <label>Time Slot (UTC)</label>
                   <input
                     type="time"
                     value={strategyData.timeSlot}
                     onChange={(e) => handleStrategyChange('timeSlot', e.target.value)}
                     className="form-input"
                   />
+                  <small className="form-help">
+                    All times are in UTC. Your local time: {strategyData.timeSlot ? utcToLocalTime(strategyData.timeSlot) : '--:--'}
+                  </small>
                 </div>
               </div>
 

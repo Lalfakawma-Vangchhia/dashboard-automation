@@ -2588,10 +2588,25 @@ async def schedule_bulk_composer_posts(
 
                 # Parse scheduled datetime
                 try:
+                    # Parse the date and time, assuming it's in UTC
                     scheduled_datetime = datetime.strptime(
                         f"{post.scheduled_date} {post.scheduled_time}", 
                         "%Y-%m-%d %H:%M"
                     )
+                    # Ensure it's timezone-aware (UTC)
+                    from datetime import timezone
+                    scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
+                    
+                    # Validate that the scheduled time is in the future
+                    now = datetime.now(timezone.utc)
+                    if scheduled_datetime <= now:
+                        results.append({
+                            "success": False, 
+                            "error": f"Scheduled time is in the past: {scheduled_datetime}", 
+                            "caption": post.caption
+                        })
+                        continue
+                        
                 except Exception as e:
                     results.append({
                         "success": False, 
