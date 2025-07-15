@@ -11,8 +11,11 @@ from app.services.groq_service import groq_service
 from app.services.facebook_service import facebook_service
 from app.services.auto_reply_service import auto_reply_service
 from app.services.instagram_service import instagram_service
+from app.services.cloudinary_service import cloudinary_service
 import pytz
 from pytz import timezone, UTC
+import base64
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,14 @@ class SchedulerService:
         self.running = False
         self.check_interval = 60  # Check every 60 seconds
     
+    def is_base64_image(self, data):
+        return data and isinstance(data, str) and data.startswith("data:image/")
+
+    def extract_base64(self, data):
+        if "," in data:
+            return data.split(",", 1)[1]
+        return data
+
     async def start(self):
         """Start the scheduler service"""
         if self.running:
@@ -85,13 +96,62 @@ class SchedulerService:
             if db:
                 db.close()
 
+    async def generate_and_upload_image(self, prompt: str, post_type: str = "feed") -> dict:
+        """Generate AI image and upload to Cloudinary"""
+        try:
+            logger.info(f"🎨 Generating AI image for prompt: '{prompt[:50]}...'")
+            
+            # Generate image using Instagram service
+            image_result = await instagram_service.generate_instagram_image_with_ai(prompt, post_type)
+            
+            if not image_result["success"]:
+                return {"success": False, "error": f"Image generation failed: {image_result.get('error')}"}
+            
+            # Convert base64 to image data
+            image_base64 = image_result["image_base64"]
+            image_data = base64.b64decode(image_base64)
+            
+            # Upload to Cloudinary
+            upload_result = cloudinary_service.upload_image_with_instagram_transform(image_data)
+            
+            if not upload_result["success"]:
+                return {"success": False, "error": f"Cloudinary upload failed: {upload_result.get('error')}"}
+            
+            logger.info(f"✅ Successfully generated and uploaded image to Cloudinary: {upload_result['url']}")
+            return {
+                "success": True,
+                "cloudinary_url": upload_result["url"],
+                "original_prompt": prompt,
+                "post_type": post_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating and uploading image: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_and_upload_video(self, prompt: str) -> dict:
+        """Generate AI video and upload to Cloudinary (placeholder for future implementation)"""
+        try:
+            logger.info(f"🎬 Generating AI video for prompt: '{prompt[:50]}...'")
+            
+            # TODO: Implement video generation with AI service
+            # For now, return an error indicating video generation is not yet implemented
+            return {
+                "success": False, 
+                "error": "Video generation with AI is not yet implemented. Please provide a video URL for reel posts."
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating and uploading video: {e}")
+            return {"success": False, "error": str(e)}
+
     async def execute_scheduled_instagram_post(self, scheduled_post: ScheduledPost, db: Session):
         """Execute a single scheduled Instagram post"""
         try:
             logger.info(f"🔄 Executing scheduled Instagram post {scheduled_post.id}: '{scheduled_post.prompt[:50]}...'")
             logger.info(f"📋 Post type: {scheduled_post.post_type.value if hasattr(scheduled_post.post_type, 'value') else scheduled_post.post_type}")
             
-            # Validate presence of caption and media
+            # Validate presence of caption
             if not scheduled_post.prompt:
                 logger.error(f"❌ Scheduled post {scheduled_post.id} missing caption. Marking as failed.")
                 scheduled_post.status = "failed"
@@ -104,13 +164,95 @@ class SchedulerService:
             post_type = scheduled_post.post_type.value if hasattr(scheduled_post.post_type, 'value') else scheduled_post.post_type
             has_media = False
             
+            # Generate and upload images if needed
             if post_type == "photo":
+                # Convert base64 image_url to Cloudinary URL if needed
+                if scheduled_post.image_url and self.is_base64_image(scheduled_post.image_url):
+                    logger.info(f"☁️ Converting base64 image_url to Cloudinary for post {scheduled_post.id}")
+                    try:
+                        base64_data = self.extract_base64(scheduled_post.image_url)
+                        image_data = base64.b64decode(base64_data)
+                        upload_result = cloudinary_service.upload_image_with_instagram_transform(image_data)
+                        if upload_result["success"]:
+                            scheduled_post.image_url = upload_result["url"]
+                            db.commit()
+                            logger.info(f"✅ Converted and updated image_url to Cloudinary: {scheduled_post.image_url}")
+                        else:
+                            logger.error(f"❌ Cloudinary upload failed: {upload_result.get('error')}")
+                            scheduled_post.status = "failed"
+                            scheduled_post.is_active = False
+                            scheduled_post.last_executed = datetime.utcnow()
+                            db.commit()
+                            return
+                    except Exception as e:
+                        logger.error(f"❌ Error converting base64 image to Cloudinary: {e}")
+                        scheduled_post.status = "failed"
+                        scheduled_post.is_active = False
+                        scheduled_post.last_executed = datetime.utcnow()
+                        db.commit()
+                        return
+                if not scheduled_post.image_url:
+                    logger.info(f"🎨 No image URL found for photo post, generating AI image...")
+                    image_result = await self.generate_and_upload_image(scheduled_post.prompt, "feed")
+                    if image_result["success"]:
+                        scheduled_post.image_url = image_result["cloudinary_url"]
+                        logger.info(f"✅ Updated scheduled post with Cloudinary image URL: {scheduled_post.image_url}")
+                    else:
+                        logger.error(f"❌ Failed to generate image: {image_result.get('error')}")
+                        scheduled_post.status = "failed"
+                        scheduled_post.is_active = False
+                        scheduled_post.last_executed = datetime.utcnow()
+                        db.commit()
+                        return
+                
                 has_media = bool(scheduled_post.image_url)
                 logger.info(f"📸 Photo post - Image URL: {scheduled_post.image_url}")
+                
             elif post_type == "carousel":
+                if not scheduled_post.media_urls or len(scheduled_post.media_urls) == 0:
+                    logger.info(f"🎨 No media URLs found for carousel post, generating AI images...")
+                    # Generate 3-5 images for carousel
+                    num_images = min(5, max(3, len(scheduled_post.prompt) // 100 + 3))  # Dynamic number based on prompt length
+                    carousel_urls = []
+                    
+                    for i in range(num_images):
+                        # Create variations of the prompt for diversity
+                        variation_prompt = f"{scheduled_post.prompt} - variation {i+1}"
+                        image_result = await self.generate_and_upload_image(variation_prompt, "feed")
+                        if image_result["success"]:
+                            carousel_urls.append(image_result["cloudinary_url"])
+                        else:
+                            logger.error(f"❌ Failed to generate carousel image {i+1}: {image_result.get('error')}")
+                    
+                    if len(carousel_urls) >= 3:
+                        scheduled_post.media_urls = carousel_urls
+                        logger.info(f"✅ Updated scheduled post with {len(carousel_urls)} Cloudinary image URLs for carousel")
+                    else:
+                        logger.error(f"❌ Failed to generate enough images for carousel")
+                        scheduled_post.status = "failed"
+                        scheduled_post.is_active = False
+                        scheduled_post.last_executed = datetime.utcnow()
+                        db.commit()
+                        return
+                
                 has_media = bool(scheduled_post.media_urls and len(scheduled_post.media_urls) > 0)
                 logger.info(f"🖼️ Carousel post - Media URLs: {scheduled_post.media_urls}")
+                
             elif post_type == "reel":
+                if not scheduled_post.video_url:
+                    logger.info(f"🎬 No video URL found for reel post, attempting to generate AI video...")
+                    video_result = await self.generate_and_upload_video(scheduled_post.prompt)
+                    if video_result["success"]:
+                        scheduled_post.video_url = video_result["cloudinary_url"]
+                        logger.info(f"✅ Updated scheduled post with Cloudinary video URL: {scheduled_post.video_url}")
+                    else:
+                        logger.error(f"❌ Failed to generate video: {video_result.get('error')}")
+                        scheduled_post.status = "failed"
+                        scheduled_post.is_active = False
+                        scheduled_post.last_executed = datetime.utcnow()
+                        db.commit()
+                        return
+                
                 has_media = bool(scheduled_post.video_url)
                 logger.info(f"🎬 Reel post - Video URL: {scheduled_post.video_url}")
             
@@ -178,7 +320,9 @@ class SchedulerService:
                 
                 if result and result.get("success"):
                     scheduled_post.status = "posted"
-                    logger.info(f"✅ Successfully posted scheduled {post_type} to Instagram: {scheduled_post.id}")
+                    # Save the Instagram post/media ID
+                    scheduled_post.post_id = result.get("post_id") or result.get("creation_id")
+                    logger.info(f"✅ Successfully posted scheduled {post_type} to Instagram: {scheduled_post.id}, post_id: {scheduled_post.post_id}")
                 else:
                     scheduled_post.status = "failed"
                     logger.error(f"❌ Failed to post {post_type} to Instagram: {result.get('error')}")

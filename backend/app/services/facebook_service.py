@@ -17,7 +17,7 @@ class FacebookService:
     """Service for Facebook API operations and integrations."""
     
     def __init__(self):
-        self.graph_api_base = "https://graph.facebook.com/v18.0"
+        self.graph_api_base = "https://graph.facebook.com/v23.0"
         self.app_id = settings.facebook_app_id
         self.app_secret = settings.facebook_app_secret
     

@@ -224,7 +224,7 @@ async def get_facebook_status(
             if acc.access_token:
                 async with __import__('httpx').AsyncClient() as client:
                     resp = await client.get(
-                        f"https://graph.facebook.com/v18.0/{acc.platform_user_id}",
+                        f"https://graph.facebook.com/v23.0/{acc.platform_user_id}",
                         params={
                             "fields": "fan_count,name,picture",
                             "access_token": acc.access_token

@@ -741,6 +741,11 @@ class ApiClient {
   async getGlobalInstagramAutoReplyProgress(instagramUserId) {
     return this.request(`/social/instagram/auto_reply/global/progress?instagram_user_id=${instagramUserId}`);
   }
+
+  async getScheduledPosts() {
+    // Adjust the endpoint if your backend uses a different path
+    return this.request('/social/scheduled-posts');
+  }
 }
 
 const apiClient = new ApiClient();

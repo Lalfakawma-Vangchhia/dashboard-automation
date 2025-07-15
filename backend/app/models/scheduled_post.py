@@ -4,6 +4,7 @@ from sqlalchemy.sql import func
 from app.database import Base
 import enum
 from datetime import datetime
+# from .strategy_plan import StrategyPlan # REMOVE this import to avoid circular import
 
 
 class FrequencyType(enum.Enum):
@@ -26,26 +27,29 @@ class ScheduledPost(Base):
     social_account_id = Column(Integer, ForeignKey("social_accounts.id"), nullable=False)
     
     # Content settings
-    prompt = Column(Text, nullable=False)  # AI prompt for content generation
-    image_url = Column(Text, nullable=True)  # Cloudinary image URL for single photo posts
-    media_urls = Column(JSON, nullable=True)  # Array of media URLs for carousel posts
-    video_url = Column(Text, nullable=True)  # Cloudinary video URL for reel posts
-    post_type = Column(Enum(PostType, name="posttype_new"), nullable=False, default=PostType.PHOTO)  # NEW: post type field
+    prompt = Column(Text, nullable=False) # AI prompt for content generation
+    image_url = Column(String, nullable=True) # Cloudinary image URL for single photo posts
+    media_urls = Column(JSON, nullable=True) # Array of media URLs for carousel posts
+    video_url = Column(String, nullable=True) # Cloudinary video URL for reel posts
+    post_type = Column(Enum(PostType, name="posttype_new"), nullable=False, default=PostType.PHOTO) # NEW: post type field
+    
+    # Instagram post ID (media ID) after posting
+    post_id = Column(String, nullable=True, index=True)  # Instagram media ID after posting
     
     # Platform
-    platform = Column(String(20), nullable=False, default="instagram")  # NEW: platform field
+    platform = Column(String(20), nullable=False, default="instagram") # NEW: platform field
     
     # Schedule settings
-    post_time = Column(String(5), nullable=False)  # HH:MM format
+    post_time = Column(String(5), nullable=False) # HH:MM format
     frequency = Column(Enum(FrequencyType), nullable=False, default=FrequencyType.DAILY)
-    scheduled_datetime = Column(DateTime(timezone=True), nullable=True)  # NEW: exact scheduled datetime
+    scheduled_datetime = Column(DateTime(timezone=True), nullable=True) # NEW: exact scheduled datetime
     
     # Add this field for strategy plan linkage
-    # strategy_id = Column(Integer, ForeignKey("strategy_plans.id"), nullable=True)
-    # strategy_plan = relationship("StrategyPlan", back_populates="scheduled_posts")
+    strategy_id = Column(Integer, ForeignKey("strategy_plans.id"), nullable=True)
+    # strategy_plan = relationship("StrategyPlan", back_populates="scheduled_posts")  # <-- REMOVE this line
     
     # Status
-    status = Column(String(20), nullable=False, default="scheduled")  # Status field (scheduled, posted, failed)
+    status = Column(String(20), nullable=False, default="scheduled") # Status field (scheduled, posted, failed)
     is_active = Column(Boolean, default=False)
     last_executed = Column(DateTime(timezone=True), nullable=True)
     next_execution = Column(DateTime(timezone=True), nullable=True)
@@ -59,4 +63,8 @@ class ScheduledPost(Base):
     social_account = relationship("SocialAccount", back_populates="scheduled_posts")
     
     def __repr__(self):
-        return f"<ScheduledPost(id={self.id}, prompt='{self.prompt[:50]}...', post_type={self.post_type.value}, frequency={self.frequency.value})>" 
+        return f"<ScheduledPost(id={self.id}, prompt='{self.prompt[:50]}...', post_type={self.post_type.value}, frequency={self.frequency.value})>"
+
+# Add this at the end of the file to avoid circular import
+from app.models.strategy_plan import StrategyPlan
+ScheduledPost.strategy_plan = relationship("StrategyPlan", back_populates="scheduled_posts")

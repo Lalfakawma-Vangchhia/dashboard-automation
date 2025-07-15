@@ -17,7 +17,7 @@ class AutoReplyService:
     """Service for handling automatic replies to Facebook comments."""
     
     def __init__(self):
-        self.graph_api_base = "https://graph.facebook.com/v18.0"
+        self.graph_api_base = "https://graph.facebook.com/v23.0"
     
     async def process_auto_replies(self, db: Session):
         """

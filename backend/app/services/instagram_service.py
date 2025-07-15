@@ -15,6 +15,7 @@ from cachetools import TTLCache
 from app.models.social_account import SocialAccount
 from app.database import get_db
 import threading
+from app.models.instagram_auto_reply_log import InstagramAutoReplyLog
 
 # In-memory set for replied comment IDs (thread-safe)
 _replied_comment_ids = set()
@@ -544,6 +545,28 @@ class InstagramService:
             logger.error(f"Failed to get Instagram comments: {e}")
             return []
     
+    async def reply_to_comment(self, comment_id: str, page_access_token: str, message: str) -> dict:
+        """Reply to an Instagram comment using the Graph API."""
+        try:
+            url = f"{self.graph_url}/{comment_id}/replies"
+            data = {
+                'access_token': page_access_token,
+                'message': message
+            }
+            # Use requests in a thread pool for async compatibility
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._session.post(url, data=data, timeout=30)
+            )
+            response.raise_for_status()
+            result = response.json()
+            return {"success": True, "id": result.get("id")}
+        except Exception as e:
+            logger.error(f"Failed to reply to Instagram comment {comment_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
     def is_configured(self) -> bool:
         """Check if Instagram service is properly configured."""
         return bool(self.app_id and self.app_secret)
@@ -560,13 +583,12 @@ def get_access_token_for_user(instagram_user_id: str):
         return account.platform_data.get("page_access_token")
     return None
 
-async def has_auto_reply(comment_id: str) -> bool:
-    """Check if a comment has already been auto-replied to. (In-memory for demo; use DB for production)"""
-    with _replied_comment_ids_lock:
-        return comment_id in _replied_comment_ids
+async def has_auto_reply(comment_id: str, instagram_user_id: str, db) -> bool:
+    return db.query(InstagramAutoReplyLog).filter_by(comment_id=comment_id, instagram_user_id=instagram_user_id).first() is not None
 
-async def mark_auto_replied(comment_id: str, instagram_user_id: str):
-    """Mark a comment as auto-replied. (In-memory for demo; use DB for production)"""
-    with _replied_comment_ids_lock:
-        _replied_comment_ids.add(comment_id)
+async def mark_auto_replied(comment_id: str, instagram_user_id: str, db):
+    if not await has_auto_reply(comment_id, instagram_user_id, db):
+        log = InstagramAutoReplyLog(comment_id=comment_id, instagram_user_id=instagram_user_id)
+        db.add(log)
+        db.commit()
 # NOTE: For production, implement persistent storage for replied comment IDs. 

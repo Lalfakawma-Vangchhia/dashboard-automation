@@ -96,7 +96,7 @@ const InstagramPage = () => {
   const [showBulkComposer, setShowBulkComposer] = useState(false);
 
   // Facebook SDK
-  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '24054495060908418';
+  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '697225659875731';
 
   // Mobile detection utility
   const isMobile = () => window.innerWidth <= 768;
@@ -1709,33 +1709,6 @@ const InstagramPage = () => {
     return () => clearInterval(intervalId);
   }, []);
 
-  // --- Content Grid Table ---
-  const renderScheduledGrid = () => (
-    <div className="scheduled-posts-grid">
-      <h3>Scheduled Instagram Posts</h3>
-      <table className="ig-table">
-        <thead>
-          <tr>
-            <th>Content</th>
-            <th>Scheduled Date</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(scheduledGridRows || []).map((post, idx) => (
-            <tr key={post.id || idx}>
-              <td title={post.prompt || ''}>
-                {(post.prompt || '').length > 120 ? (post.prompt || '').slice(0, 120) + '…' : (post.prompt || '')}
-              </td>
-              <td>{post.scheduled_datetime ? new Date(post.scheduled_datetime).toLocaleString() : '-'}</td>
-              <td className={`status-${post.status}`}>{post.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
   // --- UI Render ---
   if (authLoading) {
     return <div className="instagram-container"><div className="loading-screen"><div className="loading-spinner"></div><p>Checking authentication...</p></div></div>;
@@ -1823,7 +1796,7 @@ const InstagramPage = () => {
                 boxShadow: globalAutoReplyEnabled ? '0 0 4px #38c172' : 'none',
                 verticalAlign: 'middle',
               }} />
-              Auto Reply: {globalAutoReplyEnabled ? 'Enabled' : 'Disabled'}
+              Auto Comment Reply: {globalAutoReplyEnabled ? 'Enabled' : 'Disabled'}
               {globalAutoReplyLoading && (
                 <span className="loading-spinner" style={{ marginLeft: 10, width: 18, height: 18, border: '2px solid #fff', borderTop: '2px solid #38c172', borderRadius: '50%', display: 'inline-block', animation: 'spin 1s linear infinite' }} />
               )}
@@ -1875,24 +1848,19 @@ const InstagramPage = () => {
           <button className={`tab-button ${activeTab === 'post' ? 'active' : ''}`} onClick={() => setActiveTab('post')} disabled={!isConnected}>Create Post</button>
           <button 
             className={`tab-button ${activeTab === 'auto-reply' ? 'active' : ''}`} 
-            onClick={() => {
-              console.log('🔍 DEBUG: Auto-reply tab clicked');
-              console.log('🔍 DEBUG: isConnected:', isConnected);
-              console.log('🔍 DEBUG: selectedAccount:', selectedAccount);
-              setActiveTab('auto-reply');
-            }} 
+            onClick={() => setActiveTab('auto-reply')} 
             disabled={!isConnected || !selectedAccount}
           >
             Auto Reply
           </button>
           <button className={`tab-button ${activeTab === 'media' ? 'active' : ''}`} onClick={() => setActiveTab('media')} disabled={!isConnected || !selectedAccount}>Media Gallery</button>
           <button 
-            className="tab-button bulk-composer-btn" 
-            onClick={() => setShowBulkComposer(true)} 
+            className={`tab-button ${activeTab === 'bulk-composer' ? 'active' : ''}`} 
+            onClick={() => setActiveTab('bulk-composer')} 
             disabled={!isConnected || !selectedAccount}
-            style={{ backgroundColor: '#e4405f', color: 'white', border: 'none' }}
+            style={{ backgroundColor: activeTab === 'bulk-composer' ? '#e4405f' : undefined, color: activeTab === 'bulk-composer' ? 'white' : undefined, border: 'none' }}
           >
-            📅 Bulk Composer
+            <span role="img" aria-label="Bulk Composer">📅</span> Bulk Composer
           </button>
           <button className={`tab-button ${activeTab === 'scheduled-posts' ? 'active' : ''}`} onClick={() => setActiveTab('scheduled-posts')} disabled={!isConnected || !selectedAccount}>Scheduled Posts</button>
         </div>
@@ -2379,7 +2347,7 @@ const InstagramPage = () => {
               )}
             </div>
           )}
-          {(activeTab === 'auto-reply' && selectedAccount) && (
+          {activeTab === 'auto-reply' && selectedAccount && (
             <div className="auto-reply-section">
               {console.log('🔍 DEBUG: Rendering auto-reply section')}
               {console.log('🔍 DEBUG: activeTab:', activeTab)}
@@ -2552,6 +2520,9 @@ const InstagramPage = () => {
               {loadingMedia ? <div className="loading-media"><div className="loading-spinner"></div><p>Loading media...</p></div> : userMedia.length > 0 ? <div className="media-grid">{userMedia.slice(0, 12).map((media) => <div key={media.id} className="media-item"><div className="media-content">{media.media_type === 'IMAGE' ? <img src={media.media_url} alt="Instagram post" /> : media.media_type === 'VIDEO' ? <video controls><source src={media.media_url} type="video/mp4" /></video> : null}</div><div className="media-overlay"><div className="media-info"><p className="media-caption">{media.caption ? media.caption.substring(0, 100) + '...' : 'No caption'}</p><p className="media-date">{new Date(media.timestamp).toLocaleDateString()}</p></div></div></div>)}</div> : <div className="no-media"><h3>No Media Found</h3><p>No media found for this account. Start creating posts to see them here!</p></div>}
             </div>
           )}
+          {activeTab === 'bulk-composer' && selectedAccount && (
+            <IgBulkComposer selectedAccount={selectedAccount} onClose={() => {}} />
+          )}
           {activeTab === 'scheduled-posts' && (
             <ScheduledPostHistory />
           )}
@@ -2706,17 +2677,6 @@ const InstagramPage = () => {
         </div>
       )}
 
-      {/* Instagram Bulk Composer Modal */}
-      {showBulkComposer && (
-        <div className="modal-overlay" onClick={() => setShowBulkComposer(false)}>
-          <div className="modal-content bulk-composer-modal" onClick={(e) => e.stopPropagation()}>
-            <IgBulkComposer 
-              selectedAccount={selectedAccount} 
-              onClose={() => setShowBulkComposer(false)} 
-            />
-          </div>
-        </div>
-      )}
       {globalAutoReplyEnabled && globalAutoReplyProgress && (
         <div className="auto-reply-progress" style={{ margin: '16px 0', padding: '12px', background: '#f5f5f5', borderRadius: '8px' }}>
           <p><strong>Auto-Reply Progress:</strong> {globalAutoReplyProgress.status}</p>
@@ -2734,7 +2694,6 @@ const InstagramPage = () => {
           {retrying && <span>Retrying...</span>}
         </div>
       )}
-      {scheduledGridRows.length > 0 && renderScheduledGrid()}
     </div>
   );
 };

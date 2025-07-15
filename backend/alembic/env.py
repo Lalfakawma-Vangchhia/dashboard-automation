@@ -16,7 +16,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import Base
-from app.models import user, social_account, post, automation_rule
+from app.models import user, social_account, post, automation_rule, scheduled_post, strategy_plan, instagram_auto_reply_log
 from app.config import get_settings
 
 target_metadata = Base.metadata

@@ -10,7 +10,7 @@ from app.services.groq_service import groq_service
 
 logger = logging.getLogger(__name__)
 
-GRAPH_API_BASE = "https://graph.facebook.com/v18.0"
+GRAPH_API_BASE = "https://graph.facebook.com/v23.0"
 
 class FacebookMessageAutoReplyService:
     def __init__(self):

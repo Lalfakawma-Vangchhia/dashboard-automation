@@ -6,6 +6,7 @@ import requests
 from typing import Optional, Dict, Any
 from pathlib import Path
 from app.config import get_settings
+from app.services.cloudinary_service import cloudinary_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -224,3 +225,19 @@ class ImageService:
 
 # Create a singleton instance
 image_service = ImageService() 
+
+def ensure_cloudinary_url(image_url: str) -> str:
+    """
+    If image_url is a base64 data URL, upload it to Cloudinary and return the Cloudinary URL.
+    Otherwise, return the original image_url.
+    """
+    if image_url and isinstance(image_url, str) and image_url.startswith("data:image/"):
+        # Extract base64 data
+        base64_data = image_url.split(",", 1)[1] if "," in image_url else image_url
+        image_data = base64.b64decode(base64_data)
+        upload_result = cloudinary_service.upload_image_with_instagram_transform(image_data)
+        if upload_result["success"]:
+            return upload_result["url"]
+        else:
+            raise Exception(f"Cloudinary upload failed: {upload_result['error']}")
+    return image_url 

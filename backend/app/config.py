@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Instagram Integration
     instagram_app_id: str | None = os.getenv("INSTAGRAM_APP_ID")
     instagram_app_secret: str | None = os.getenv("INSTAGRAM_APP_SECRET")
+    instagram_webhook_verify_token: str | None = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN")
+
 
     # LinkedIn Integration
     linkedin_client_id: str | None = os.getenv("LINKEDIN_CLIENT_ID")

@@ -28,19 +28,23 @@ class CloudinaryService:
         return bool(self.cloud_name and self.api_key and self.api_secret)
 
     def upload_image_with_instagram_transform(self, image_data):
-        # Implement your Cloudinary upload logic here
-        # For example, using cloudinary.uploader.upload with Instagram-specific transforms
-        import cloudinary.uploader
+        """Upload an image to Cloudinary with Instagram-specific transforms."""
+        if not self.is_configured():
+            return {"success": False, "error": "Cloudinary not configured"}
         try:
             result = cloudinary.uploader.upload(
                 image_data,
                 transformation=[
                     {"width": 1080, "height": 1080, "crop": "fill", "gravity": "auto"}
                 ],
-                folder="instagram"
+                folder="instagram",
+                format="jpg",
+                quality="auto"
             )
+            logger.info(f"Successfully uploaded image to Cloudinary: {result['secure_url']}")
             return {"success": True, "url": result["secure_url"]}
         except Exception as e:
+            logger.error(f"Cloudinary image upload failed: {e}")
             return {"success": False, "error": str(e)}
 
     def upload_video_with_instagram_transform(self, file_or_base64) -> Dict:
