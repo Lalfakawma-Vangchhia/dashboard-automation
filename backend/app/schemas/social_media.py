@@ -30,6 +30,7 @@ class SocialAccountResponse(SocialAccountBase):
     is_connected: bool
     connected_at: datetime
     last_sync_at: Optional[datetime] = None
+    media_count: int = 0
     
     class Config:
         from_attributes = True

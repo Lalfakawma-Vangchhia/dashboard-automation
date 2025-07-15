@@ -1252,6 +1252,19 @@ const InstagramPage = () => {
         if (selectedAccount) {
           loadUserMedia(selectedAccount.platform_user_id);
         }
+        // --- Synchronize account info for post count ---
+        try {
+          const allAccounts = await apiClient.getSocialAccounts();
+          const updatedAccount = allAccounts.find(acc => acc.id === selectedAccount.id);
+          if (updatedAccount) {
+            setSelectedAccount(updatedAccount);
+            setInstagramAccounts(prev =>
+              prev.map(acc => acc.id === updatedAccount.id ? updatedAccount : acc)
+            );
+          }
+        } catch (err) {
+          console.warn('Failed to refresh account info after post:', err);
+        }
         setActiveTab('scheduled-posts');
       } else {
         let errorMsg = `Failed to create post: ${response.error || 'Unknown error'}`;

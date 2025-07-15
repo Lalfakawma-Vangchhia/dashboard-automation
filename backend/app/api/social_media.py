@@ -167,6 +167,12 @@ async def get_social_accounts(
     accounts = db.query(SocialAccount).filter(
         SocialAccount.user_id == current_user.id
     ).all()
+    # Calculate media_count for each account
+    for acc in accounts:
+        acc.media_count = db.query(Post).filter(
+            Post.social_account_id == acc.id,
+            Post.status == PostStatus.PUBLISHED
+        ).count()
     return accounts
 
 
