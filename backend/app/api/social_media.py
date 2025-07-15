@@ -167,13 +167,16 @@ async def get_social_accounts(
     accounts = db.query(SocialAccount).filter(
         SocialAccount.user_id == current_user.id
     ).all()
-    # Calculate media_count for each account
+    result = []
     for acc in accounts:
-        acc.media_count = db.query(Post).filter(
+        media_count = db.query(Post).filter(
             Post.social_account_id == acc.id,
             Post.status == PostStatus.PUBLISHED
         ).count()
-    return accounts
+        acc_dict = {**acc.__dict__, "media_count": media_count}
+        acc_dict.pop('_sa_instance_state', None)
+        result.append(SocialAccountResponse(**acc_dict))
+    return result
 
 
 @router.get("/social/accounts/{account_id}", response_model=SocialAccountResponse)
