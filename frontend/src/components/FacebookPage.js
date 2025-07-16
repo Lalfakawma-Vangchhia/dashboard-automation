@@ -47,6 +47,7 @@ function FacebookPage() {
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
 
   const [showBulkComposer, setShowBulkComposer] = useState(false);
+  const [showAutomate, setShowAutomate] = useState(false); // <-- Add this line
   const [autoReplyMessagesEnabled, setAutoReplyMessagesEnabled] = useState(true); // Default ON
   const [autoReplyMessagesLoading, setAutoReplyMessagesLoading] = useState(false);
   const [autoReplyMessagesError, setAutoReplyMessagesError] = useState(null);
@@ -1373,7 +1374,10 @@ function FacebookPage() {
                   <div className="tab-navigation">
                     <button
                       className={`tab-button ${activeTab === 'auto' ? 'active' : ''}`}
-                      onClick={() => setActiveTab('auto')}
+                      onClick={() => {
+                        setActiveTab('auto');
+                        setShowAutomate(false);
+                      }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
@@ -1382,7 +1386,10 @@ function FacebookPage() {
                     </button>
                     <button
                       className={`tab-button ${activeTab === 'manual' ? 'active' : ''}`}
-                      onClick={() => setActiveTab('manual')}
+                      onClick={() => {
+                        setActiveTab('manual');
+                        setShowAutomate(false);
+                      }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -1395,6 +1402,7 @@ function FacebookPage() {
                       onClick={() => {
                         setActiveTab('bulk');
                         setShowBulkComposer(true);
+                        setShowAutomate(false);
                       }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1422,7 +1430,7 @@ function FacebookPage() {
                   {/* Tab Content */}
                   <div className="tab-content">
                     {/* Automate Tab */}
-                    {activeTab === 'automate' && (
+                    {activeTab === 'automate' && showAutomate && (
                       <div className="automate-section">
                         <h3>Automate</h3>
                         <div className="automate-toggles">
