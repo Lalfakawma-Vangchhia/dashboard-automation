@@ -426,20 +426,22 @@ class ApiClient {
 
   // Unified Instagram post creation endpoint
   async createUnifiedInstagramPost(instagramUserId, options = {}) {
+    // Only include image_url and video_url if present
+    const payload = {
+      instagram_user_id: instagramUserId,
+      caption: options.caption,
+      post_type: options.post_type || 'manual',
+      use_ai: options.use_ai || false,
+      prompt: options.prompt,
+      carousel_images: options.carousel_images || [],
+      location: options.location,
+      hashtags: options.hashtags
+    };
+    if (options.image_url) payload.image_url = options.image_url;
+    if (options.video_url) payload.video_url = options.video_url;
     return this.request('/social/instagram/create-post', {
       method: 'POST',
-      body: JSON.stringify({
-        instagram_user_id: instagramUserId,
-        caption: options.caption,
-        image_url: options.image_url,
-        post_type: options.post_type || 'manual',
-        use_ai: options.use_ai || false,
-        prompt: options.prompt,
-        carousel_images: options.carousel_images || [],
-        video_url: options.video_url,
-        location: options.location,
-        hashtags: options.hashtags
-      }),
+      body: JSON.stringify(payload),
     });
   }
 

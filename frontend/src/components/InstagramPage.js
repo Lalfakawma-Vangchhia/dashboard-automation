@@ -7,7 +7,7 @@ import './InstagramPage.css';
 import ScheduledPostHistory from './ScheduledPostHistory';
 
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
-const ACCEPTED_VIDEO_TYPES = ['video/mp4'];
+const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
 
 const InstagramPage = () => {
   const navigate = useNavigate();
@@ -678,7 +678,7 @@ const InstagramPage = () => {
     const file = e.target.files[0];
     if (!file) return;
     if (!ACCEPTED_VIDEO_TYPES.includes(file.type)) {
-      setMessage('Only .mp4 files are allowed.');
+      setMessage('Only .mp4 or .mov files are allowed.');
       return;
     }
     setReelUploading(true);
@@ -1116,8 +1116,8 @@ const InstagramPage = () => {
       // Use the unified Instagram post endpoint for all post types
               const options = {
           instagram_user_id: selectedAccount.platform_user_id,
-          post_type: postType === 'photo' ? 'feed' : postType,
-          media_type: postType === 'reel' ? 'REELS' : 'image'
+          post_type: postType === 'photo' ? 'feed' : (postType === 'reel' ? 'reel' : postType),
+          media_type: postType === 'reel' ? 'video' : 'image'
         };
 
       // Handle different post types
@@ -1168,33 +1168,24 @@ const InstagramPage = () => {
         return;
       } else if (postType === 'reel') {
         options.caption = reelCaption;
-        if (reelUrl && reelUrl.trim()) {
+        // Always use Cloudinary URL for Reels
+        if (reelUrl && reelUrl.trim().startsWith('http')) {
           options.video_url = reelUrl;
         } else if (reelFilename && reelFilename.trim()) {
           options.video_filename = reelFilename;
         }
         options.is_reel = true;
-        // Add thumbnail info if available
         if (reelThumbnailUrl && reelThumbnailUrl.trim()) {
           options.thumbnail_url = reelThumbnailUrl;
         } else if (reelThumbnailFilename && reelThumbnailFilename.trim()) {
           options.thumbnail_filename = reelThumbnailFilename;
         }
         options.media_type = 'video';
-        console.log('🔍 DEBUG: Reel post options:', {
-          postType,
-          reelCaption,
-          reelUrl,
-          reelFilename,
-          finalVideoUrl: options.video_url,
-          finalVideoFilename: options.video_filename,
-          caption: options.caption,
-          media_type: options.media_type,
-          post_type: options.post_type,
-          is_reel: options.is_reel,
-          thumbnail_url: options.thumbnail_url,
-          thumbnail_filename: options.thumbnail_filename
-        });
+        // Do NOT send media_file or media_filename for Reels
+        if ('media_file' in options) delete options.media_file;
+        if ('media_filename' in options) delete options.media_filename;
+        if ('image_url' in options) delete options.image_url;
+        console.log('🔍 DEBUG: Reel post options:', options);
       }
 
       // Remove any empty string values from options to avoid backend validation issues
@@ -1859,13 +1850,6 @@ const InstagramPage = () => {
         <div className="tab-navigation">
           <button className={`tab-button ${activeTab === 'connect' ? 'active' : ''}`} onClick={() => setActiveTab('connect')}>Connect Account</button>
           <button className={`tab-button ${activeTab === 'post' ? 'active' : ''}`} onClick={() => setActiveTab('post')} disabled={!isConnected}>Create Post</button>
-          <button 
-            className={`tab-button ${activeTab === 'auto-reply' ? 'active' : ''}`} 
-            onClick={() => setActiveTab('auto-reply')} 
-            disabled={!isConnected || !selectedAccount}
-          >
-            Auto Reply
-          </button>
           <button className={`tab-button ${activeTab === 'media' ? 'active' : ''}`} onClick={() => setActiveTab('media')} disabled={!isConnected || !selectedAccount}>Media Gallery</button>
           <button 
             className={`tab-button ${activeTab === 'bulk-composer' ? 'active' : ''}`} 
@@ -2294,15 +2278,8 @@ const InstagramPage = () => {
               {postType === 'reel' && (
                 <div className="post-card">
                   <div className="form-group">
-                    <label>Upload Reel Video (.mp4)</label>
-                    <button 
-                      type="button" 
-                      onClick={() => openFilePicker('video', 'manual')} 
-                      className="file-picker-button"
-                      disabled={reelUploading}
-                    >
-                      {reelUploading ? 'Uploading...' : 'Choose Video'}
-                    </button>
+                    <label>Upload Reel Video (.mp4, .mov)</label>
+                    <input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" onChange={handleReelFileChange} disabled={reelUploading} />
                     {reelUrl && (
                       <div className="video-preview">
                         <video src={reelUrl} controls style={{ width: '100%', maxHeight: '300px' }} />
@@ -2311,7 +2288,6 @@ const InstagramPage = () => {
                   </div>
                   <div className="form-group">
                     <label>Upload Reel Thumbnail (optional):</label>
-                    <input type="file" accept="image/png,image/jpeg,image/jpg" onChange={handleReelThumbnailChange} disabled={reelUploading} />
                     {reelThumbnailUrl && <img src={reelThumbnailUrl} alt="Reel Thumbnail Preview" style={{maxWidth: 120, marginTop: 8}} />}
                   </div>
                   <div className="form-group">
@@ -2360,173 +2336,6 @@ const InstagramPage = () => {
               )}
             </div>
           )}
-          {activeTab === 'auto-reply' && selectedAccount && (
-            <div className="auto-reply-section">
-              {console.log('🔍 DEBUG: Rendering auto-reply section')}
-              {console.log('🔍 DEBUG: activeTab:', activeTab)}
-              {console.log('🔍 DEBUG: selectedAccount:', selectedAccount)}
-              <div style={{background: 'red', color: 'white', padding: '10px', margin: '10px'}}>
-                🔍 DEBUG: Auto-reply section is rendering!
-              </div>
-              <div className="auto-reply-header">
-                <div className="auto-reply-title">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M8 12h.01"/>
-                    <path d="M12 12h.01"/>
-                    <path d="M16 12h.01"/>
-                    <path d="M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-                  </svg>
-                  <span className="auto-reply-label">AI Auto-Reply</span>
-                  <span className={`auto-reply-status ${autoReplyEnabled ? 'enabled' : 'disabled'}`}>
-                    {autoReplyEnabled ? 'ON' : 'OFF'}
-                  </span>
-                  {autoReplyEnabled && selectedAutoReplyPosts.length > 0 && (
-                    <span className="auto-reply-count">
-                      ({selectedAutoReplyPosts.length} post{selectedAutoReplyPosts.length !== 1 ? 's' : ''})
-                    </span>
-                  )}
-                </div>
-                <div className="auto-reply-controls">
-                  {!isSelectingPosts ? (
-                    <button
-                      onClick={handleSelectPosts}
-                      className="btn btn-secondary btn-small"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 11l3 3L22 4"/>
-                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-                      </svg>
-                      Select
-                    </button>
-                  ) : (
-                    <div className="selection-controls">
-                      <button
-                        onClick={selectAllPosts}
-                        disabled={loadingAutoReplyPosts}
-                        className="btn btn-secondary btn-small"
-                      >
-                        Select All
-                      </button>
-                      <button
-                        onClick={deselectAllPosts}
-                        disabled={loadingAutoReplyPosts}
-                        className="btn btn-secondary btn-small"
-                      >
-                        Deselect All
-                      </button>
-                      <button
-                        onClick={handleDoneSelecting}
-                        className="btn btn-primary btn-small"
-                      >
-                        Done
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    onClick={handleAutoReplyToggle}
-                    disabled={autoReplyLoading || (!autoReplyEnabled && autoReplyPosts.length === 0)}
-                    className={`btn ${autoReplyEnabled ? 'btn-danger' : 'btn-success'} btn-small`}
-                  >
-                    {autoReplyLoading ? (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                      </svg>
-                    ) : (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 12l2 2 4-4"/>
-                      </svg>
-                    )}
-                    {autoReplyLoading 
-                      ? (window.innerWidth <= 768 ? '...' : 'Updating...') 
-                      : (autoReplyEnabled ? (window.innerWidth <= 768 ? 'Off' : 'Disable') : (window.innerWidth <= 768 ? 'On' : 'Enable'))
-                    }
-                  </button>
-                </div>
-              </div>
-
-              <div className="auto-reply-posts-section">
-                <div className="auto-reply-posts-header">
-                  <h4>Select Posts for Auto-Reply</h4>
-                </div>
-                
-                {loadingAutoReplyPosts ? (
-                  <div className="loading-posts">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                    </svg>
-                    Loading posts...
-                  </div>
-                ) : autoReplyPosts.length > 0 ? (
-                  <div className="auto-reply-posts-list">
-                    {autoReplyPosts.map((post) => (
-                      <div
-                        key={post.id}
-                        className={`auto-reply-post-item ${selectedAutoReplyPosts.includes(post.id) ? 'selected' : ''}`}
-                        onClick={() => handlePostSelection(post.id)}
-                        onTouchStart={(e) => handlePostTouch(post.id, e)}
-                      >
-                        {isSelectingPosts && (
-                          <div className="post-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={selectedAutoReplyPosts.includes(post.id)}
-                              onChange={() => handlePostSelection(post.id)}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </div>
-                        )}
-                        <div className="post-content">
-                          <p className="post-text">{post.content}</p>
-                          <div className="post-meta">
-                            <span className="post-date">
-                              {new Date(post.created_at).toLocaleDateString()}
-                            </span>
-                            {post.has_media && (
-                              <span className="post-media">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                                  <polyline points="21,15 16,10 5,21"/>
-                                </svg>
-                                {post.media_count} media
-                              </span>
-                            )}
-                            <span className={`post-status ${post.status}`}>
-                              {post.status}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="no-posts-message">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    </svg>
-                    <p>No posts found for auto-reply selection.</p>
-                    <p className="no-posts-subtitle">Posts made via this app will appear here for auto-reply selection.</p>
-                    <div className="no-posts-actions">
-                      <button 
-                        onClick={() => setActiveTab('post')} 
-                        className="btn btn-primary btn-small"
-                      >
-                        Create Post
-                      </button>
-                      <button 
-                        onClick={loadPostsForAutoReply} 
-                        className="btn btn-secondary btn-small"
-                      >
-                        Refresh Posts
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-          )}
-
           {activeTab === 'media' && selectedAccount && (
             <div className="media-section">
               <div className="media-header"><h2>Recent Posts</h2><p>Your latest Instagram content</p></div>

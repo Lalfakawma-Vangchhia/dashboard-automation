@@ -102,6 +102,8 @@ class UnifiedInstagramPostRequest(BaseModel):
     image_url: Optional[str] = Field(None, description="URL of existing image to use")
     video_url: Optional[str] = Field(None, description="URL of existing video to use (base64 data URL)")
     video_filename: Optional[str] = Field(None, description="Filename of existing video")
+    media_file: Optional[str] = Field(None, description="Base64 encoded media file (for video uploads)")
+    media_filename: Optional[str] = Field(None, description="Media filename (for video uploads)")
     post_type: str = Field(default="feed", description="Type of post for sizing")
     use_ai_text: bool = Field(default=False, description="Whether to generate text using AI")
     use_ai_image: bool = Field(default=False, description="Whether to generate image using AI")
@@ -116,11 +118,13 @@ class UnifiedInstagramPostRequest(BaseModel):
             self.image_url and self.image_url.strip(),
             self.image_prompt and self.image_prompt.strip(),
             self.video_url and self.video_url.strip(),
-            self.video_filename and self.video_filename.strip()
+            self.video_filename and self.video_filename.strip(),
+            self.media_file and self.media_file.strip(),
+            self.media_filename and self.media_filename.strip()
         ])
         
         if not has_content:
-            raise ValueError("At least one of caption, content_prompt, image_url, image_prompt, video_url, or video_filename must be provided")
+            raise ValueError("At least one of caption, content_prompt, image_url, image_prompt, video_url, video_filename, media_file, or media_filename must be provided")
         
         return self
 
@@ -2162,24 +2166,14 @@ async def create_unified_instagram_post(
             or (hasattr(request, 'media_type') and str(request.media_type).upper() == 'REELS')
             or (hasattr(request, 'media_type') and str(request.media_type).lower() == 'video')
         )
-        post_result = await instagram_service.create_post(
-            instagram_user_id=request.instagram_user_id,
-            page_access_token=account.access_token,
-            caption=final_caption,
-            image_url=final_image_url,
-            video_url=final_video_url,
-            video_file_path=final_video_file_path,
-            video_filename=final_video_filename,
-            is_reel=is_reel,
-            thumbnail_url=getattr(request, 'thumbnail_url', None),
-            thumbnail_filename=getattr(request, 'thumbnail_filename', None)
-        )
-        
-        if not post_result["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create Instagram post: {post_result.get('error', 'Unknown error')}"
-            )
+        # --- BASE64 VIDEO TO CLOUDINARY LOGIC FOR REELS ---
+        if is_reel and getattr(request, 'media_file', None) and getattr(request, 'media_filename', None):
+            upload_result = cloudinary_service.upload_video_with_instagram_transform(request.media_file)
+            if upload_result["success"]:
+                final_video_url = upload_result["url"]
+            else:
+                raise HTTPException(status_code=500, detail=f"Video upload failed: {upload_result.get('error', 'Unknown error')}")
+        # --- END BASE64 VIDEO TO CLOUDINARY LOGIC ---
         
         # Determine post type based on media type and content
         logger.info(f"=== POST TYPE DETERMINATION DEBUG ===")
@@ -2193,29 +2187,27 @@ async def create_unified_instagram_post(
             logger.info(f"final_image_url preview: {final_image_url[:100]}...")
         
         # Determine post type based on media type and content
-        if getattr(request, "is_reel", False) or (hasattr(request, "media_type") and request.media_type == "REELS"):
+        if is_reel:
             post_type = PostType.REEL
             logger.info("Setting post type to REEL for media_type='REELS' or is_reel=True")
         elif final_video_url or final_video_file_path:
-            post_type = PostType.VIDEO
-            logger.info("Setting post type to VIDEO because video_url or video_file_path is present")
-        elif final_image_url:
+            post_type = PostType.REEL
+            logger.info("Setting post type to REEL because video_url or video_file_path is present")
+        elif final_image_url and not is_reel:
             post_type = PostType.IMAGE
-            logger.info("Setting post type to IMAGE because image_url is present")
+            logger.info("Setting post type to IMAGE because image_url is present and not a reel")
         else:
             post_type = PostType.TEXT
             logger.info("Setting post type to TEXT (default)")
-        
-        # ADDITIONAL SAFETY CHECK: If we have video_url or video_file_path, ALWAYS set to VIDEO
-        if (final_video_url or final_video_file_path) and post_type != PostType.VIDEO:
-            logger.warning(f"⚠️ OVERRIDING: Found video content but post_type was {post_type}, forcing to VIDEO")
-            post_type = PostType.VIDEO
-        
-        # FINAL SAFETY CHECK: If media_type is "video", ALWAYS set to VIDEO
-        if request.media_type == "video" and post_type != PostType.VIDEO:
-            logger.warning(f"⚠️ OVERRIDING: media_type='video' but post_type was {post_type}, forcing to VIDEO")
-            post_type = PostType.VIDEO
-        
+        logger.info(f"post_type value before DB save: {post_type} (type: {type(post_type)})")
+
+        # Only require image_url for photo posts
+        if post_type == PostType.IMAGE and not final_image_url:
+            raise HTTPException(status_code=400, detail="Image post requires an image_url.")
+        # For reels, do NOT require image_url, only require video_url
+        if post_type == PostType.REEL and not final_video_url:
+            raise HTTPException(status_code=400, detail="Reel post requires a video_url.")
+
         logger.info(f"Final post_type determined: {post_type}")
         logger.info(f"=== END POST TYPE DETERMINATION DEBUG ===")
         
@@ -2225,12 +2217,13 @@ async def create_unified_instagram_post(
         post = Post(
             user_id=current_user.id,
             social_account_id=account.id,
-            content=final_caption,
+            content=final_caption or "Media post",
             post_type=post_type,
-            status=PostStatus.PUBLISHED,
+            media_urls=[final_video_url] if post_type == PostType.REEL and final_video_url else ([final_image_url] if final_image_url else ([final_video_url] if final_video_url else None)),
             platform_post_id=post_result.get("post_id"),
+            status=PostStatus.PUBLISHED,
             published_at=datetime.utcnow(),
-            media_urls=[final_image_url] if final_image_url else ([final_video_url] if final_video_url else None)
+            platform_response=post_result
         )
         
         db.add(post)
@@ -3906,13 +3899,20 @@ def bulk_schedule_instagram_posts(
                 media_urls = post.get("carousel_images")
             elif post_type == "reel":
                 video_url = post.get("media_file") or post.get("video_url")
+                if isinstance(video_url, str) and video_url.startswith("data:video"):
+                    upload_result = cloudinary_service.upload_video_with_instagram_transform(video_url)
+                    if upload_result.get("success"):
+                        video_url = upload_result["url"]
+                    else:
+                        # handle error, e.g. skip or mark as failed
+                        continue
 
             scheduled_post = ScheduledPost(
                 user_id=current_user.id,
                 social_account_id=social_account_id,
                 prompt=caption,
                 scheduled_datetime=dt,
-                post_type=PostType(post_type),
+                post_type=PostType(post_type.lower()),
                 platform="instagram",
                 status="scheduled",
                 is_active=True,

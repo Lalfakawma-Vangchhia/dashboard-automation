@@ -28,7 +28,7 @@ def run_command(command, description):
 def check_alembic_installed():
     """Check if alembic is available"""
     try:
-        subprocess.run(["python", "-m", "alembic", "--version"], check=True, capture_output=True)
+        subprocess.run([sys.executable, "-m", "alembic", "--version"], check=True, capture_output=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False

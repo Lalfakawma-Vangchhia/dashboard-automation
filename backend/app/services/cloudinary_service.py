@@ -56,7 +56,8 @@ class CloudinaryService:
                 file_or_base64,
                 resource_type="video",
                 transformation=[
-                    {"width": 1080, "height": 1920, "crop": "fill"},  # Instagram Reels aspect ratio
+                    {"width": 1080, "height": 1920, "crop": "fill"},
+                    {"start_offset": "0", "end_offset": "90"},  # Trim to 90s
                     {"quality": "auto"},
                     {"fetch_format": "mp4"}
                 ],

@@ -249,26 +249,37 @@ function IgBulkComposer({ selectedAccount, onClose }) {
     );
   };
 
-  const handleMediaUpload = (rowId, event) => {
+  const handleMediaUpload = async (rowId, event) => {
     const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setComposerRows(prev => 
-          prev.map(row => 
-            row.id === rowId
-              ? {
-              ...row, 
-              mediaFile: file, 
-                  mediaPreview: e.target.result,
-                  status: (row.caption || '').trim() ? 'ready' : 'draft'
-                }
-              : row
-          )
-        );
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Find the row to determine post type
+    const row = composerRows.find(r => r.id === rowId);
+    if (!row) return;
+
+    // --- REELS VIDEO UPLOAD LOGIC ---
+    if (row.postType === 'reel') {
+      alert('Your video is converted to: 1080x1920 as instagram policy.');
+      // Proceed to upload to backend as before...
     }
+
+    // --- PHOTO/CAROUSEL LOGIC (unchanged) ---
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setComposerRows(prev => 
+        prev.map(row => 
+          row.id === rowId
+            ? {
+                ...row, 
+                mediaFile: file, 
+                mediaPreview: e.target.result,
+                status: (row.caption || '').trim() ? 'ready' : 'draft'
+              }
+            : row
+        )
+      );
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleGenerateMedia = async (rowId) => {
