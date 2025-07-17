@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule
 from app.models.social_account import SocialAccount
 from app.services.groq_service import groq_service
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ GRAPH_API_BASE = "https://graph.facebook.com/v23.0"
 class FacebookMessageAutoReplyService:
     def __init__(self):
         self.conversation_sessions = {}  # Store conversation context per user
+        self.http_client = httpx.AsyncClient()  # Reuse this client
         
     async def process_page_messages(self, page_id: str, access_token: str, rule: AutomationRule):
         """
@@ -29,8 +31,11 @@ class FacebookMessageAutoReplyService:
                 logger.info(f"No new messages found for page {page_id}")
                 return
                 
-            for message in messages:
-                await self._process_single_message(message, page_id, access_token, rule)
+            # Process all messages concurrently
+            await asyncio.gather(*[
+                self._process_single_message(message, page_id, access_token, rule)
+                for message in messages
+            ])
                 
         except Exception as e:
             logger.error(f"Error processing page messages: {e}")

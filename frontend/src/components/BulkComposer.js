@@ -15,25 +15,57 @@ const promptTemplates = [
   { id: 6, name: 'Custom', prompt: 'custom' }
 ];
 
-// Utility function to convert UTC time to local time for display
-const utcToLocalTime = (utcTime) => {
+// Utility function to convert UTC time to IST time for display
+const utcToIstTime = (utcTime) => {
   const [hours, minutes] = utcTime.split(':');
   const date = new Date();
   date.setUTCHours(parseInt(hours), parseInt(minutes), 0, 0);
-  return date.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    hour12: false 
-  });
+  
+  // Convert to IST (UTC+5:30)
+  const istHours = (date.getUTCHours() + 5) % 24;
+  const istMinutes = (date.getUTCMinutes() + 30) % 60;
+  const addHour = date.getUTCMinutes() + 30 >= 60 ? 1 : 0;
+  const finalIstHours = (istHours + addHour) % 24;
+  
+  return `${String(finalIstHours).padStart(2, '0')}:${String(istMinutes).padStart(2, '0')}`;
 };
 
-// Utility function to convert local time to UTC for backend
-const localToUtcTime = (localTime) => {
-  const [hours, minutes] = localTime.split(':');
-  const date = new Date();
-  date.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-  return date.toTimeString().slice(0, 5);
+// Utility function to convert IST time to UTC for backend
+const istToUtcTime = (istTime) => {
+  const [hours, minutes] = istTime.split(':');
+  let utcHours = (parseInt(hours) - 5 + 24) % 24;
+  let utcMinutes = parseInt(minutes) - 30;
+  
+  if (utcMinutes < 0) {
+    utcMinutes += 60;
+    utcHours = (utcHours - 1 + 24) % 24;
+  }
+  
+  return `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}`;
 };
+
+// dateStr: "2025-07-17"
+// timeStr: "11:17"
+function toISTISOString(dateStr, timeStr) {
+  // Create a Date object in the user's local time
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, minute] = timeStr.split(':').map(Number);
+  const localDate = new Date(year, month - 1, day, hour, minute);
+
+  // Get the UTC time value
+  const utc = localDate.getTime() - (localDate.getTimezoneOffset() * 60000);
+
+  // Offset for IST (+5:30)
+  const istOffset = 5.5 * 60 * 60000;
+  const istDate = new Date(utc + istOffset);
+
+  // Format as ISO string with +05:30
+  const pad = (n) => n.toString().padStart(2, '0');
+  const iso =
+    `${istDate.getFullYear()}-${pad(istDate.getMonth() + 1)}-${pad(istDate.getDate())}T` +
+    `${pad(istDate.getHours())}:${pad(istDate.getMinutes())}:00+05:30`;
+  return iso;
+}
 
 function BulkComposer({ selectedPage, onClose }) {
 
@@ -207,6 +239,15 @@ function BulkComposer({ selectedPage, onClose }) {
       generateInitialRows();
     }
   }, [strategyData.startDate, strategyData.endDate, strategyData.frequency, strategyData.timeSlot, generateInitialRows]);
+  
+  // Convert default time slot to IST on component mount
+  useEffect(() => {
+    // Convert the default UTC time to IST when component mounts
+    if (strategyData.timeSlot) {
+      const istTime = utcToIstTime(strategyData.timeSlot);
+      setStrategyData(prev => ({...prev, timeSlot: istTime}));
+    }
+  }, []);
 
   // Load scheduled posts
   const loadScheduledPosts = useCallback(async () => {
@@ -810,10 +851,11 @@ function BulkComposer({ selectedPage, onClose }) {
             }
           }
           
+          // For Instagram bulk schedule, send scheduled_time in IST (as selected in UI)
           const postData = {
             caption: row.caption,
             scheduled_date: row.scheduledDate,
-            scheduled_time: row.scheduledTime,
+            scheduled_time: row.scheduledTime, // Send IST time directly
             media_file: mediaFile,
             media_filename: row.mediaFile ? row.mediaFile.name : (row.mediaPreview ? 'generated_image.jpg' : null)
           };
@@ -1203,7 +1245,7 @@ function BulkComposer({ selectedPage, onClose }) {
 
                 {/* Time Slot should be just below End Date */}
                 <div className="form-group">
-                  <label>Time Slot (UTC)</label>
+                  <label>Time Slot (IST - Indian Standard Time)</label>
                   <input
                     type="time"
                     value={strategyData.timeSlot}
@@ -1211,7 +1253,7 @@ function BulkComposer({ selectedPage, onClose }) {
                     className="form-input"
                   />
                   <small className="form-help">
-                    All times are in UTC. Your local time: {strategyData.timeSlot ? utcToLocalTime(strategyData.timeSlot) : '--:--'}
+                    All times are in IST (UTC+5:30).
                   </small>
                 </div>
               </div>
@@ -1558,6 +1600,7 @@ function BulkComposer({ selectedPage, onClose }) {
                         value={row.scheduledTime}
                         onChange={(e) => handleCellEdit(row.id, 'scheduledTime', e.target.value)}
                         className="time-input"
+                        style={{ width: '90px' }}
                       />
                     </div>
                     

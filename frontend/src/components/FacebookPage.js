@@ -72,6 +72,14 @@ function FacebookPage() {
   // Add new state for auto-reply message rule
   const [autoReplyMessageRule, setAutoReplyMessageRule] = useState(null);
 
+  // Add this state for auto-reply settings
+  const [autoReplySettings, setAutoReplySettings] = useState({
+    enabled: false,
+    template: 'Thank you for your comment! We appreciate your engagement. 😊',
+    ruleId: null,
+    selectedPostIds: []
+  });
+
   const FACEBOOK_APP_ID = process.env.REACT_APP_FACEBOOK_APP_ID || '697225659875731';
 
   // Mobile detection utility

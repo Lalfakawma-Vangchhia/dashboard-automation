@@ -2594,17 +2594,15 @@ async def schedule_bulk_composer_posts(
 
                 # Parse scheduled datetime
                 try:
-                    # Parse the date and time, assuming it's in UTC
-                    scheduled_datetime = datetime.strptime(
-                        f"{post.scheduled_date} {post.scheduled_time}", 
-                        "%Y-%m-%d %H:%M"
+                    import pytz
+                    ist = pytz.timezone("Asia/Kolkata")
+                    # Parse as IST, then convert to UTC for storage
+                    scheduled_datetime = ist.localize(
+                        datetime.strptime(f"{post.scheduled_date} {post.scheduled_time}", "%Y-%m-%d %H:%M")
                     )
-                    # Ensure it's timezone-aware (UTC)
-                    from datetime import timezone
-                    scheduled_datetime = scheduled_datetime.replace(tzinfo=timezone.utc)
-                    
+                    scheduled_datetime = scheduled_datetime.astimezone(pytz.utc)
                     # Validate that the scheduled time is in the future
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(pytz.utc)
                     if scheduled_datetime <= now:
                         results.append({
                             "success": False, 
@@ -2612,7 +2610,6 @@ async def schedule_bulk_composer_posts(
                             "caption": post.caption
                         })
                         continue
-                        
                 except Exception as e:
                     results.append({
                         "success": False, 
@@ -3866,6 +3863,7 @@ def bulk_schedule_instagram_posts(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
+    # IMPORTANT: scheduled_time is expected in IST (as selected in UI)
     ist = pytz.timezone("Asia/Kolkata")
     scheduled_posts = []
     failed_posts = []

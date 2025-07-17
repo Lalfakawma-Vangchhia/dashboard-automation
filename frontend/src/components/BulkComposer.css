@@ -456,10 +456,11 @@
 }
 
 .caption-container {
+  position: relative;
   display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
+  align-items: stretch;
   width: 100%;
+  gap: 0;
 }
 
 .caption-input {
@@ -472,12 +473,32 @@
   transition: all 0.2s ease;
   background: var(--bg-primary);
   line-height: 1.4;
+  padding-right: 2.5rem; /* Space for expand icon */
 }
 
 .caption-input:focus {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.expand-btn {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  background: transparent;
+  border: none;
+  padding: 0.25rem;
+  cursor: pointer;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-color);
+  transition: color 0.2s;
+}
+.expand-btn:hover {
+  color: var(--primary-dark);
 }
 
 .expand-btn,
@@ -652,15 +673,28 @@
   background: rgba(220, 38, 38, 1);
 }
 
-.date-input,
-.time-input {
+.date-input {
+  width: 120px;
+  min-width: 110px;
+  max-width: 160px;
   padding: 0.75rem;
   border: 2px solid var(--border-color);
   border-radius: var(--radius-md);
   font-size: 0.875rem;
   transition: all 0.2s ease;
   background: var(--bg-primary);
-  width: 100%;
+}
+
+.time-input {
+  width: 90px;
+  min-width: 80px;
+  max-width: 120px;
+  padding: 0.75rem;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  background: var(--bg-primary);
 }
 
 .date-input:focus,
@@ -1566,6 +1600,16 @@
   .post-actions .btn,
   .edit-actions .btn {
     width: 100%;
+  }
+
+  .time-input {
+    width: 70px;
+    min-width: 60px;
+    font-size: 0.9rem;
+  }
+  .expand-btn {
+    right: 0.25rem;
+    bottom: 0.25rem;
   }
 }
 

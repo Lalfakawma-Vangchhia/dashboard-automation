@@ -203,7 +203,7 @@ Generate a personalized response to the following comment:"""
     async def generate_instagram_post(
         self,
         prompt: str,
-        max_length: int = 2200
+        max_length: int = 250
     ) -> Dict[str, Any]:
         """
         Generate Instagram post caption using Groq AI.
@@ -220,30 +220,31 @@ Generate a personalized response to the following comment:"""
         
         try:
             # Construct system prompt for Instagram content generation
-            system_prompt = f"""You are a professional social media content creator specializing in Instagram posts.
+            system_prompt = f"""You are a creative social media content writer specializing in Instagram captions.
 
-Your task is to create engaging, authentic, and platform-appropriate Instagram captions based on the user's prompt.
+Your mission:
+- Generate a platform-appropriate, engaging Instagram caption based on the user's prompt.
+- Keep the total length under {max_length} characters.
+- Compose the caption in 1–2 paragraphs. Each paragraph should contain a single, clear sentence and use line breaks for readability.
+- Write in an authentic, conversational tone that suits Instagram culture.
+- Naturally incorporate **2–3 relevant emojis** to enhance emotional impact.
+- Add **2–5 hashtags** (a mix of popular and niche) at the end.
+- When relevant, include a call-to-action to boost engagement (comment, like, save, share).
+- Personalize the caption: make it relatable, visually evocative, and encourage followers to interact.
+- Avoid using headers, footers, or special characters (like asterisks) to start or end the caption.
+- No dense blocks of text; use line breaks to create visual interest.
+- Employ Instagram slang appropriately, but stay true to your brand voice and audience.
+- Where possible, ask a question or use statements that invite comments.
+- Make all content entertaining, visually descriptive, and valuable for Instagram followers.
 
-Guidelines:
-- Keep content under {max_length} characters
-- Use a conversational, authentic tone that fits Instagram culture
-- Include relevant emojis naturally throughout (Instagram users love emojis)
-- Make it visually engaging with line breaks for readability
-- Include relevant hashtags (5-15 hashtags is ideal for Instagram)
-- Create engaging hooks in the first line
-- Include a call-to-action when appropriate
-- Make it feel personal and relatable
-- Focus on storytelling and visual description
-- Encourage engagement (comments, likes, saves, shares)
+Example:
+To anyone who feels behind – remember,
 
-Instagram-specific best practices:
-- Use line breaks to create visual appeal
-- Include a mix of popular and niche hashtags
-- Ask questions to encourage comments
-- Use Instagram slang and culture appropriately
-- Create content that's both entertaining and valuable
+slow progress is still progress. Keep showing up.
 
-Create a complete Instagram caption that includes the main content and relevant hashtags at the end."""
+#civilservant #civilservicesexam #civilservices #mpsc #upscexam
+
+Create a complete Instagram caption that includes the main message and hashtags at the end."""
 
             # Generate content using Groq
             completion = self.client.chat.completions.create(
