@@ -2,6 +2,7 @@ import logging
 from groq import Groq
 from typing import Optional, Dict, Any
 from app.config import get_settings
+import re
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -32,7 +33,7 @@ class GroqService:
         self, 
         prompt: str, 
         content_type: str = "post",
-        max_length: int = 2000
+        max_length: int = 500
     ) -> Dict[str, Any]:
         """
         Generate Facebook post content using Groq AI.
@@ -54,18 +55,19 @@ class GroqService:
             
             # Generate content using Groq
             completion = self.client.chat.completions.create(
-                model="llama-3.1-8b-instant",  # Fast and efficient model
+                model="llama3-70b-8192",  # Fast and efficient model
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=500,
-                temperature=0.7,
+                max_tokens=250,
+                temperature=0.6,
                 top_p=0.9,
                 stream=False
             )
             
             generated_content = completion.choices[0].message.content.strip()
+            generated_content = strip_outer_quotes(generated_content)
             
             # Validate content length
             if len(generated_content) > max_length:
@@ -73,7 +75,7 @@ class GroqService:
             
             return {
                 "content": generated_content,
-                "model_used": "llama-3.1-8b-instant",
+                "model_used": "llama3-70b-8192",
                 "tokens_used": completion.usage.total_tokens if completion.usage else 0,
                 "success": True
             }
@@ -90,7 +92,15 @@ class GroqService:
     
     def _get_facebook_system_prompt(self, content_type: str, max_length: int) -> str:
         """Get system prompt based on content type."""
-        base_prompt = f"""You are a regular person sharing content on Facebook in a natural, conversational way.
+        base_prompt = f"""IMPORTANT: If you include a quote, DO NOT use any quotation marks (" or ') around it. Write the quote as plain text. It should not start or end with quotation marks.
+
+BAD: As Nelson Mandela once said, "The greatest glory in living lies not in never falling, but in rising every time we fall."
+GOOD: As Nelson Mandela once said, The greatest glory in living lies not in never falling, but in rising every time we fall.
+
+BAD: "Just a Thursday chilling, rest of the week will be a day for me."
+GOOD: Just a Thursday chilling, rest of the week will be a day for me.
+
+You are a regular person sharing content on Facebook in a natural, conversational way.
 
 CRITICAL: Generate ONLY the post content. Do not include any headers, titles, footers, or explanatory text.
 
@@ -98,20 +108,20 @@ Guidelines:
 - Write like a real person would naturally speak
 - Keep under {max_length} characters
 - Use casual, conversational tone
-- Include 2-3 relevant emojis naturally in the text
+- Include 2-3 relevant emojis naturally in the text, but do not keep too much.
 - Write as if you're sharing with friends
 - Make it feel spontaneous and authentic
 - Avoid corporate or robotic language
-- No hashtags unless specifically requested
+- Use newline before hashtags 
 - Start directly with the content, no introductions
 - Start with capital letter
 - End with period
-
 """
         
         if content_type == "post":
             return base_prompt + """
 Write natural Facebook post content that:
+- Do not use quotation mark(" ") at the beginning or end of the caption
 - Feels like a real person wrote it
 - Flows naturally without forced structure
 - Includes personal touches or relatable experiences
@@ -171,7 +181,7 @@ Guidelines:
 Generate a personalized response to the following comment:"""
             
             completion = self.client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama3-70b-8192",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Comment: {original_comment}\nContext: {context or 'General social media page'}"}
@@ -248,7 +258,7 @@ Create a complete Instagram caption that includes the main message and hashtags 
 
             # Generate content using Groq
             completion = self.client.chat.completions.create(
-                model="llama-3.1-8b-instant",  # Fast and efficient model
+                model="llama3-70b-8192",  # Fast and efficient model
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
@@ -260,6 +270,7 @@ Create a complete Instagram caption that includes the main message and hashtags 
             )
             
             generated_content = completion.choices[0].message.content.strip()
+            generated_content = strip_outer_quotes(generated_content)
             
             # Validate content length
             if len(generated_content) > max_length:
@@ -267,7 +278,7 @@ Create a complete Instagram caption that includes the main message and hashtags 
             
             return {
                 "content": generated_content,
-                "model_used": "llama-3.1-8b-instant",
+                "model_used": "llama3-70b-8192",
                 "tokens_used": completion.usage.total_tokens if completion.usage else 0,
                 "success": True
             }
@@ -339,6 +350,7 @@ Generate a caption that follows the custom strategy template."""
             )
             
             generated_content = completion.choices[0].message.content.strip()
+            generated_content = strip_outer_quotes(generated_content)
             
             # Validate content length
             if len(generated_content) > max_length:
@@ -368,3 +380,7 @@ Generate a caption that follows the custom strategy template."""
 
 # Global service instance
 groq_service = GroqService() 
+
+def strip_outer_quotes(text: str) -> str:
+    # Remove leading/trailing single or double quotes, and any leading/trailing whitespace/newlines
+    return re.sub(r'^[\'"]+|[\'"]+$', '', text).strip() 

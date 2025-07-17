@@ -1052,6 +1052,7 @@
   overflow: hidden;
   transition: box-shadow 0.2s, border-color 0.2s;
   margin-bottom: 0.5rem;
+  position: relative; /* Ensure the card is the positioning context */
 }
 .scheduled-post-group.expanded {
   box-shadow: var(--shadow-lg);
@@ -1066,6 +1067,7 @@
   cursor: pointer;
   border-bottom: 1px solid var(--border-color);
   transition: background 0.2s;
+  position: relative; /* Make this the context for the expand button */
 }
 .scheduled-post-group.expanded .schedule-group-header {
   background: var(--primary-light);
@@ -1093,14 +1095,20 @@
   border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--primary-color);
-  transition: background 0.2s, transform 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  transition: 
+    transform 0.3s cubic-bezier(0.4, 0.2, 0.2, 1), /* Smooth rotation */
+    background 0.2s, 
+    box-shadow 0.2s;
+  box-shadow: 0 1px 4px rgba(80, 120, 200, 0.08);
 }
 .expand-btn.expanded {
-  transform: rotate(180deg);
+  transform: translateY(-50%) rotate(180deg); /* Rotate when expanded */
   background: var(--primary-light);
+  box-shadow: 0 2px 8px rgba(80, 120, 200, 0.15);
+}
+.expand-btn:hover {
+  background: #d0e4ff;
+  box-shadow: 0 2px 8px rgba(80, 120, 200, 0.18);
 }
 .schedule-content-grid {
   background: var(--bg-primary);

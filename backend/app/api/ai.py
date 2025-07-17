@@ -46,10 +46,19 @@ async def generate_content(
     based on user prompts. Perfect for creating Facebook posts, captions,
     and other social media content.
     
+    - IMPORTANT: If you include a quote, DO NOT use any quotation marks (" or ') around it. Write the quote as plain text.
+    - It should not be start or end with quotation mark("")
     - **prompt**: Your idea or topic for the content
     - **platform**: Target platform (facebook, instagram, etc.)
     - **content_type**: Type of content (post, comment, story)
     - **max_length**: Maximum character length for the content
+
+    BAD: As Nelson Mandela once said, "The greatest glory in living lies not in never falling, but in rising every time we fall."
+    GOOD: As Nelson Mandela once said, The greatest glory in living lies not in never falling, but in rising every time we fall.
+    BAD: "Just a thursday chilling, rest of the week will be a day for me."
+    BAD: Just a thursday chilling, rest of the week will be a day for me.
+
+
     """
     try:
         logger.info(f"Generating content for user {current_user.id} with prompt: {request.prompt[:50]}...")
