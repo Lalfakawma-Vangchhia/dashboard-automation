@@ -908,8 +908,14 @@ function IgBulkComposer({ selectedAccount, onClose }) {
       }
     } catch (error) {
       let errorMsg = 'Error scheduling Instagram posts. Please try again.';
+      // Check if any of the readyRows are reels
+      const hasReel = composerRows.filter(row => selectedRows.includes(row.id)).some(row => (row.postType || '').toLowerCase() === 'reel');
       if (error && error.error === 'timeout') {
-        errorMsg = 'Request timed out. Video processing may take longer. Please try again or check your video file size.';
+        if (hasReel) {
+          errorMsg = 'Your reel is being processed and will be scheduled soon. Please check back in a few minutes.';
+        } else {
+          errorMsg = 'Request timed out. Video processing may take longer. Please try again or check your video file size.';
+        }
       } else if (error && error.errorData) {
         errorMsg += `\nAPI Error: ${JSON.stringify(error.errorData)}`;
       } else if (error && error.message) {

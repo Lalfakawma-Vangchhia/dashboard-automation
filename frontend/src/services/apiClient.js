@@ -38,7 +38,7 @@ class ApiClient {
       console.log(`Making API request to: ${url}`);
       
       // Dynamic timeout – longer for AI image endpoints which can take ~30-60 s
-      let timeoutMs = 15000; // default 15 s
+      let timeoutMs = 300000; // default  s
       const longRunningEndpoints = [
         '/facebook/generate-image',
         '/facebook/post-with-image',
@@ -426,7 +426,7 @@ class ApiClient {
 
   // Unified Instagram post creation endpoint
   async createUnifiedInstagramPost(instagramUserId, options = {}) {
-    // Only include image_url and video_url if present
+    // Only include image_url and video_url if 
     const payload = {
       instagram_user_id: instagramUserId,
       caption: options.caption,
