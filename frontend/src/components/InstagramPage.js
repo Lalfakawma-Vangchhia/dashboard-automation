@@ -1114,11 +1114,11 @@ const InstagramPage = () => {
 
     try {
       // Use the unified Instagram post endpoint for all post types
-              const options = {
-          instagram_user_id: selectedAccount.platform_user_id,
-          post_type: postType === 'photo' ? 'feed' : (postType === 'reel' ? 'reel' : postType),
-          media_type: postType === 'reel' ? 'video' : 'image'
-        };
+      const options = {
+        instagram_user_id: selectedAccount.platform_user_id,
+        post_type: postType === 'photo' ? 'feed' : (postType === 'reel' ? 'reel' : postType),
+        media_type: postType === 'reel' ? 'video' : 'image' // <-- robust: send 'video' for reels
+      };
 
       // Handle different post types
       if (postType === 'photo') {
