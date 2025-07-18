@@ -175,7 +175,15 @@ token.json
 
 # Vitual Environment
 /backend/asgard/
-/frontend/node_modules
+/frontend/node_modules/
 /backend/client_secrets
 /backend/alembic/versions/*
 /backend/alembic/__pycache__
+/backend/alembic.ini
+/backend/requirements.txt
+/backend/venv
+venv/
+
+/backend/app/main.py
+/backend/run.py
+/backend/alembic.ini 

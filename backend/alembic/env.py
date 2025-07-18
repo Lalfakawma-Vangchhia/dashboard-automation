@@ -19,7 +19,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.models import Base
-import app.models  # ensures all models are loaded and registered
+from app.models import * # ensures all models are loaded and registered
 
 target_metadata = Base.metadata
 # --- End addition ---

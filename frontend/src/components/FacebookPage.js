@@ -80,7 +80,7 @@ function FacebookPage() {
     selectedPostIds: []
   });
 
-  const FACEBOOK_APP_ID = process.env.REACT_APP_FACEBOOK_APP_ID || '697225659875731';
+  const FACEBOOK_APP_ID = process.env.REACT_APP_FACEBOOK_APP_ID || '24054495060908418';
 
   // Mobile detection utility
   const isMobile = () => window.innerWidth <= 768;

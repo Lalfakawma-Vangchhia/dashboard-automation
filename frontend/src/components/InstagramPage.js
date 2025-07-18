@@ -96,7 +96,7 @@ const InstagramPage = () => {
   const [showBulkComposer, setShowBulkComposer] = useState(false);
 
   // Facebook SDK
-  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '697225659875731';
+  const INSTAGRAM_APP_ID = process.env.REACT_APP_INSTAGRAM_APP_ID || '24054495060908418';
 
   // Mobile detection utility
   const isMobile = () => window.innerWidth <= 768;

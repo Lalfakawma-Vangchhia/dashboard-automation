@@ -534,15 +534,17 @@ async def handle_incoming_comment_webhook(data):
     import traceback
     from app.models.global_auto_reply_status import GlobalAutoReplyStatus
     from app.models.social_account import SocialAccount
-    from app.database import get_db
-    db = next(get_db())
+    from app.database import SessionLocal
+    # Remove: from app.database import get_db
+    # db = next(get_db())
     logger.info(f"[WEBHOOK] Received Instagram comment webhook: {data}")
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") == "comments":
                 comment = change["value"]
                 logger.info(f"[WEBHOOK] Incoming comment object: {comment}")
-                instagram_user_id = comment.get("from", {}).get("id")
+                # Use the IG user ID of the account that received the comment (entry['id'])
+                instagram_user_id = entry.get("id")
                 # Support both 'media_id' and 'media': {'id': ...}
                 media_id = comment.get("media_id")
                 if not media_id and "media" in comment and "id" in comment["media"]:
@@ -550,48 +552,49 @@ async def handle_incoming_comment_webhook(data):
                 comment_id = comment.get("id")
                 comment_text = comment.get("text", "")
                 logger.info(f"[WEBHOOK] New comment event: comment_id={comment_id}, media_id={media_id}, text={comment_text}")
-                account = db.query(SocialAccount).filter_by(platform_user_id=instagram_user_id).first()
-                my_ig_user_id = account.platform_user_id if account else None
-                if not GlobalAutoReplyStatus.is_enabled(instagram_user_id):
-                    logger.info(f"[WEBHOOK] Auto-reply is not enabled for user {instagram_user_id}, skipping comment {comment_id}")
-                    continue
-                try:
-                    page_access_token = await get_access_token_for_user(instagram_user_id)
-                except Exception as e:
-                    logger.error(f"[WEBHOOK] Failed to get access token for user {instagram_user_id}: {e}")
-                    logger.error(traceback.format_exc())
-                    continue
-                # Check if already replied
-                if await has_auto_reply(comment_id, instagram_user_id, db):
-                    logger.info(f"[WEBHOOK] Already replied to comment {comment_id}, skipping.")
-                    continue
-                # Skip own comments
-                commenter_id = comment.get('from', {}).get('id')
-                if commenter_id == my_ig_user_id:
-                    logger.info(f"[WEBHOOK] Skipping own comment {comment_id} (user_id={commenter_id})")
-                    continue
-                try:
-                    logger.info(f"[WEBHOOK] Triggering reply logic for comment_id={comment_id}, media_id={media_id}")
-                    # Extract commenter name from the comment
-                    commenter_name = comment.get("from", {}).get("username", "there")
-                    context = f"Instagram comment by {commenter_name}: {comment_text}"
-                    reply_result = await groq_service.generate_auto_reply(comment_text, context)
-                    reply = reply_result["content"] if reply_result["success"] else f"Thank {commenter_name}, we appreciate your comment!"
-                    logger.info(f"[WEBHOOK] Generated reply: {reply}")
-                    api_response = await instagram_service.reply_to_comment(
-                        comment_id=comment_id,
-                        page_access_token=page_access_token,
-                        message=reply
-                    )
-                    logger.info(f"[WEBHOOK] Instagram API reply response: {api_response}")
-                    if api_response.get("success"):
-                        await mark_auto_replied(comment_id, instagram_user_id, db)
-                        logger.info(f"[WEBHOOK] Marked comment {comment_id} as replied.")
-                    else:
-                        logger.error(f"[WEBHOOK] Failed to post reply to comment {comment_id}: {api_response}")
-                except Exception as e:
-                    logger.error(f"[WEBHOOK] Exception during reply logic for comment {comment_id}: {e}")
-                    logger.error(traceback.format_exc())
+                with SessionLocal() as db:
+                    account = db.query(SocialAccount).filter_by(platform_user_id=instagram_user_id).first()
+                    my_ig_user_id = account.platform_user_id if account else None
+                    if not GlobalAutoReplyStatus.is_enabled(instagram_user_id, db):
+                        logger.info(f"[WEBHOOK] Auto-reply is not enabled for user {instagram_user_id}, skipping comment {comment_id}")
+                        continue
+                    try:
+                        page_access_token = get_access_token_for_user(instagram_user_id)
+                    except Exception as e:
+                        logger.error(f"[WEBHOOK] Failed to get access token for user {instagram_user_id}: {e}")
+                        logger.error(traceback.format_exc())
+                        continue
+                    # Check if already replied
+                    if await has_auto_reply(comment_id, instagram_user_id, db):
+                        logger.info(f"[WEBHOOK] Already replied to comment {comment_id}, skipping.")
+                        continue
+                    # Skip own comments
+                    commenter_id = comment.get('from', {}).get('id')
+                    if commenter_id == my_ig_user_id:
+                        logger.info(f"[WEBHOOK] Skipping own comment {comment_id} (user_id={commenter_id})")
+                        continue
+                    try:
+                        logger.info(f"[WEBHOOK] Triggering reply logic for comment_id={comment_id}, media_id={media_id}")
+                        # Extract commenter name from the comment
+                        commenter_name = comment.get("from", {}).get("username", "there")
+                        context = f"Instagram comment by {commenter_name}: {comment_text}"
+                        reply_result = await groq_service.generate_auto_reply(comment_text, context)
+                        reply = reply_result["content"] if reply_result["success"] else f"Thank {commenter_name}, we appreciate your comment!"
+                        logger.info(f"[WEBHOOK] Generated reply: {reply}")
+                        api_response = await instagram_service.reply_to_comment(
+                            comment_id=comment_id,
+                            page_access_token=page_access_token,
+                            message=reply
+                        )
+                        logger.info(f"[WEBHOOK] Instagram API reply response: {api_response}")
+                        if api_response.get("success"):
+                            await mark_auto_replied(comment_id, instagram_user_id, db)
+                            logger.info(f"[WEBHOOK] Marked comment {comment_id} as replied.")
+                        else:
+                            logger.error(f"[WEBHOOK] Failed to post reply to comment {comment_id}: {api_response}")
+                    except Exception as e:
+                        logger.error(f"[WEBHOOK] Exception during reply logic for comment {comment_id}: {e}")
+                        logger.error(traceback.format_exc())
 
 async def handle_incoming_dm_webhook(data):
     """Process incoming Instagram webhook for new DMs and auto-reply if enabled."""
@@ -691,7 +694,9 @@ async def handle_incoming_dm_webhook(data):
 
 async def enable_global_auto_reply(instagram_user_id: str, user):
     from app.models.global_auto_reply_status import GlobalAutoReplyStatus
-    GlobalAutoReplyStatus.set_enabled(instagram_user_id, True)
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        GlobalAutoReplyStatus.set_enabled(instagram_user_id, True, db)
     page_access_token = get_access_token_for_user(instagram_user_id)
     posts = instagram_service.get_user_media(instagram_user_id, page_access_token, limit=100)
     total_posts = len(posts)
@@ -730,11 +735,16 @@ async def enable_global_auto_reply(instagram_user_id: str, user):
         polling_tasks[instagram_user_id] = asyncio.create_task(poll_new_posts_and_comments(instagram_user_id, user))
 
 async def disable_global_auto_reply(instagram_user_id: str, user):
-    GlobalAutoReplyStatus.set_enabled(instagram_user_id, False)
+    from app.models.global_auto_reply_status import GlobalAutoReplyStatus
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        GlobalAutoReplyStatus.set_enabled(instagram_user_id, False, db)
     # await stop_monitoring_comments(instagram_user_id, user) # Removed as per edit hint
 
 async def get_global_auto_reply_status(instagram_user_id: str, user):
-    return GlobalAutoReplyStatus.is_enabled(instagram_user_id)
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        return GlobalAutoReplyStatus.is_enabled(instagram_user_id, db)
 
 async def get_global_auto_reply_progress(instagram_user_id: str, user):
     # Return the current progress for this user (fast, non-blocking)
@@ -756,7 +766,7 @@ async def poll_new_posts_and_comments(instagram_user_id: str, user, interval: in
         db = next(get_db())
         account = db.query(SocialAccount).filter_by(platform_user_id=instagram_user_id).first()
         my_ig_user_id = account.platform_user_id if account else None
-        while GlobalAutoReplyStatus.is_enabled(instagram_user_id):
+        while GlobalAutoReplyStatus.is_enabled(instagram_user_id, db):
             page_access_token = await get_access_token_for_user(instagram_user_id)
             posts = instagram_service.get_user_media(instagram_user_id, page_access_token, limit=100)
             for post in posts:

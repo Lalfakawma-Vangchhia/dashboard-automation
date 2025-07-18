@@ -13,28 +13,19 @@ class GlobalAutoReplyStatus(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     @classmethod
-    def is_enabled(cls, instagram_user_id: str, db=None):
-        """Check if global auto-reply is enabled for an Instagram user."""
-        if db is None:
-            from app.database import get_db
-            db = next(get_db())
-        
+    def is_enabled(cls, instagram_user_id: str, db):
         status = db.query(cls).filter_by(instagram_user_id=instagram_user_id).first()
+        print(f"[DEBUG] is_enabled: user={instagram_user_id}, found={bool(status)}, enabled={getattr(status, 'enabled', None)}")
         return status.enabled if status else False
     
     @classmethod
-    def set_enabled(cls, instagram_user_id: str, enabled: bool, db=None):
-        """Set global auto-reply status for an Instagram user."""
-        if db is None:
-            from app.database import get_db
-            db = next(get_db())
-        
+    def set_enabled(cls, instagram_user_id: str, enabled: bool, db):
         status = db.query(cls).filter_by(instagram_user_id=instagram_user_id).first()
         if status:
             status.enabled = enabled
         else:
             status = cls(instagram_user_id=instagram_user_id, enabled=enabled)
             db.add(status)
-        
         db.commit()
+        print(f"[DEBUG] set_enabled: user={instagram_user_id}, enabled={enabled}")
         return status 
