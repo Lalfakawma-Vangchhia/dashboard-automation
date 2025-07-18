@@ -535,28 +535,26 @@ async def handle_incoming_comment_webhook(data):
     from app.models.global_auto_reply_status import GlobalAutoReplyStatus
     from app.models.social_account import SocialAccount
     from app.database import SessionLocal
-    # Remove: from app.database import get_db
-    # db = next(get_db())
     logger.info(f"[WEBHOOK] Received Instagram comment webhook: {data}")
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") == "comments":
                 comment = change["value"]
                 logger.info(f"[WEBHOOK] Incoming comment object: {comment}")
-                # Use the IG user ID of the account that received the comment (entry['id'])
                 instagram_user_id = entry.get("id")
-                # Support both 'media_id' and 'media': {'id': ...}
                 media_id = comment.get("media_id")
                 if not media_id and "media" in comment and "id" in comment["media"]:
                     media_id = comment["media"]["id"]
                 comment_id = comment.get("id")
                 comment_text = comment.get("text", "")
-                logger.info(f"[WEBHOOK] New comment event: comment_id={comment_id}, media_id={media_id}, text={comment_text}")
                 with SessionLocal() as db:
                     account = db.query(SocialAccount).filter_by(platform_user_id=instagram_user_id).first()
-                    my_ig_user_id = account.platform_user_id if account else None
-                    if not GlobalAutoReplyStatus.is_enabled(instagram_user_id, db):
-                        logger.info(f"[WEBHOOK] Auto-reply is not enabled for user {instagram_user_id}, skipping comment {comment_id}")
+                    if not account:
+                        logger.info(f"[WEBHOOK] No SocialAccount found for instagram_user_id={instagram_user_id}, skipping comment {comment_id}")
+                        continue
+                    user_id = account.user_id
+                    if not GlobalAutoReplyStatus.is_enabled(user_id, instagram_user_id, db):
+                        logger.info(f"[WEBHOOK] Auto-reply is not enabled for user {user_id}, ig={instagram_user_id}, skipping comment {comment_id}")
                         continue
                     try:
                         page_access_token = get_access_token_for_user(instagram_user_id)
@@ -570,7 +568,7 @@ async def handle_incoming_comment_webhook(data):
                         continue
                     # Skip own comments
                     commenter_id = comment.get('from', {}).get('id')
-                    if commenter_id == my_ig_user_id:
+                    if commenter_id == instagram_user_id:
                         logger.info(f"[WEBHOOK] Skipping own comment {comment_id} (user_id={commenter_id})")
                         continue
                     try:
@@ -696,7 +694,7 @@ async def enable_global_auto_reply(instagram_user_id: str, user):
     from app.models.global_auto_reply_status import GlobalAutoReplyStatus
     from app.database import SessionLocal
     with SessionLocal() as db:
-        GlobalAutoReplyStatus.set_enabled(instagram_user_id, True, db)
+        GlobalAutoReplyStatus.set_enabled(user.id, instagram_user_id, True, db)
     page_access_token = get_access_token_for_user(instagram_user_id)
     posts = instagram_service.get_user_media(instagram_user_id, page_access_token, limit=100)
     total_posts = len(posts)
@@ -738,13 +736,13 @@ async def disable_global_auto_reply(instagram_user_id: str, user):
     from app.models.global_auto_reply_status import GlobalAutoReplyStatus
     from app.database import SessionLocal
     with SessionLocal() as db:
-        GlobalAutoReplyStatus.set_enabled(instagram_user_id, False, db)
+        GlobalAutoReplyStatus.set_enabled(user.id, instagram_user_id, False, db)
     # await stop_monitoring_comments(instagram_user_id, user) # Removed as per edit hint
 
 async def get_global_auto_reply_status(instagram_user_id: str, user):
     from app.database import SessionLocal
     with SessionLocal() as db:
-        return GlobalAutoReplyStatus.is_enabled(instagram_user_id, db)
+        return GlobalAutoReplyStatus.is_enabled(user.id, instagram_user_id, db)
 
 async def get_global_auto_reply_progress(instagram_user_id: str, user):
     # Return the current progress for this user (fast, non-blocking)
@@ -766,7 +764,7 @@ async def poll_new_posts_and_comments(instagram_user_id: str, user, interval: in
         db = next(get_db())
         account = db.query(SocialAccount).filter_by(platform_user_id=instagram_user_id).first()
         my_ig_user_id = account.platform_user_id if account else None
-        while GlobalAutoReplyStatus.is_enabled(instagram_user_id, db):
+        while GlobalAutoReplyStatus.is_enabled(user.id, instagram_user_id, db):
             page_access_token = await get_access_token_for_user(instagram_user_id)
             posts = instagram_service.get_user_media(instagram_user_id, page_access_token, limit=100)
             for post in posts:
