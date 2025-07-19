@@ -2088,56 +2088,61 @@ async def create_unified_instagram_post(
                    f"media_type={request.media_type}")
         logger.info(f"Post type determination: media_type='{request.media_type}', "
                    f"has_video_url={bool(request.video_url)}, has_image_url={bool(request.image_url)}")
-        
-        # ADDITIONAL DEBUG: Check if this is a reel post
-        if request.video_url:
-            logger.info(f"🎬 REEL POST DETECTED: video_url present = {request.video_url[:100]}...")
-        if request.media_type == "video":
-            logger.info(f"🎬 REEL POST DETECTED: media_type='video'")
-        if request.video_url and request.media_type == "video":
-            logger.info(f"🎬 CONFIRMED REEL POST: Both video_url and media_type='video' present")
+
+        # --- Robust validation for required fields ---
         # Find the Instagram account
         account = db.query(SocialAccount).filter(
             SocialAccount.user_id == current_user.id,
             SocialAccount.platform == "instagram",
             SocialAccount.platform_user_id == request.instagram_user_id
         ).first()
-        
         if not account:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Instagram account not found"
             )
-        
         # Get the page access token from platform_data
-        page_access_token = account.platform_data.get("page_access_token")
+        page_access_token = account.platform_data.get("page_access_token") if account.platform_data else None
         if not page_access_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Page access token not found. Please reconnect your Instagram account."
             )
-        
+        # Validate required fields for each post type
+        post_type = (request.media_type or '').lower()
+        if request.video_url or post_type == 'video' or post_type == 'reel':
+            # Reel post
+            if not request.video_url:
+                raise HTTPException(status_code=400, detail="Missing video_url for reel post.")
+        elif post_type == 'carousel':
+            # Carousel should be handled by a different endpoint, but if it gets here, check image_urls
+            if not hasattr(request, 'image_urls') or not request.image_urls:
+                raise HTTPException(status_code=400, detail="Missing image_urls for carousel post.")
+        else:
+            # Photo post
+            if not request.image_url:
+                raise HTTPException(status_code=400, detail="Missing image_url for photo post.")
+        # --- End validation ---
+
         # Initialize variables
         final_caption = request.caption
         final_image_url = request.image_url
         final_video_url = request.video_url
         final_video_file_path = None
         final_video_filename = request.video_filename
-        
+
         # Handle video file path if provided
         if request.video_filename:
-            # Convert filename to full path (assuming files are stored in temp_images directory)
             import os
             final_video_file_path = os.path.join("temp_images", request.video_filename)
             if not os.path.exists(final_video_file_path):
                 logger.warning(f"Video file not found at path: {final_video_file_path}")
                 final_video_file_path = None
-        
+
         # Step 1: Generate AI text content if requested
         if request.use_ai_text and request.content_prompt:
             logger.info("Generating AI text content for Instagram post")
             from app.services.groq_service import groq_service
-            
             ai_text_result = await groq_service.generate_instagram_post(request.content_prompt)
             if ai_text_result["success"]:
                 final_caption = ai_text_result["content"]
@@ -2146,13 +2151,11 @@ async def create_unified_instagram_post(
                     status_code=500,
                     detail=f"AI text generation failed: {ai_text_result.get('error', 'Unknown error')}"
                 )
-        
         # Step 2: Generate AI image if requested
         if request.use_ai_image and request.image_prompt:
             logger.info("Generating AI image for Instagram post")
             from app.services.stability_service import stability_service
             from app.services.cloudinary_service import cloudinary_service
-            
             image_result = await stability_service.generate_image(request.image_prompt)
             if image_result["success"]:
                 upload_result = cloudinary_service.upload_image_with_instagram_transform(
@@ -2170,9 +2173,7 @@ async def create_unified_instagram_post(
                     status_code=500,
                     detail=f"Image generation failed: {image_result.get('error', 'Unknown error')}"
                 )
-        
         # Step 3: Create the Instagram post
-        # Determine if this is a Reel post
         is_reel = (
             getattr(request, 'is_reel', False)
             or (hasattr(request, 'media_type') and str(request.media_type).upper() == 'REELS')
@@ -2180,28 +2181,16 @@ async def create_unified_instagram_post(
         )
         # --- BASE64 VIDEO TO CLOUDINARY LOGIC FOR REELS ---
         if is_reel and getattr(request, 'media_file', None) and getattr(request, 'media_filename', None):
+            from app.services.cloudinary_service import cloudinary_service
             upload_result = cloudinary_service.upload_video_with_instagram_transform(request.media_file)
             if upload_result["success"]:
                 final_video_url = upload_result["url"]
             else:
                 raise HTTPException(status_code=500, detail=f"Video upload failed: {upload_result.get('error', 'Unknown error')}")
         # --- END BASE64 VIDEO TO CLOUDINARY LOGIC ---
-        
-        # Determine post type based on media type and content
-        logger.info(f"=== POST TYPE DETERMINATION DEBUG ===")
-        logger.info(f"request.media_type: '{request.media_type}'")
-        logger.info(f"final_video_url exists: {bool(final_video_url)}")
-        logger.info(f"final_video_file_path exists: {bool(final_video_file_path)}")
-        logger.info(f"final_image_url exists: {bool(final_image_url)}")
-        if final_video_url:
-            logger.info(f"final_video_url preview: {final_video_url[:100]}...")
-        if final_image_url:
-            logger.info(f"final_image_url preview: {final_image_url[:100]}...")
-        
         # Determine post type for single_instagram_posts
         single_post_type = None
         single_media_urls = []
-        # --- FIX: Robust reel detection ---
         if final_video_url:
             single_post_type = "reel"
             single_media_urls = [final_video_url]
@@ -2219,11 +2208,14 @@ async def create_unified_instagram_post(
             single_media_urls = []
         logger.info(f"single_post_type for single_instagram_posts: {single_post_type}")
         logger.info(f"single_media_urls for single_instagram_posts: {single_media_urls}")
-        
         # Actually create the Instagram post (call to service)
         post_result = None
+        # --- Caption validation for photo post ---
+        if single_post_type == "photo" and (not final_caption or not str(final_caption).strip()):
+            raise HTTPException(status_code=400, detail="Caption is required for Instagram photo posts.")
         try:
             if single_post_type == "reel":
+                logger.info(f"Posting REEL to Instagram: user_id={request.instagram_user_id}, video_url={final_video_url}, caption={final_caption}")
                 post_result = await instagram_service.create_post(
                     instagram_user_id=request.instagram_user_id,
                     page_access_token=page_access_token,
@@ -2232,6 +2224,7 @@ async def create_unified_instagram_post(
                     is_reel=True
                 )
             elif single_post_type == "carousel":
+                logger.info(f"Posting CAROUSEL to Instagram: user_id={request.instagram_user_id}, image_urls={single_media_urls}, caption={final_caption}")
                 post_result = await instagram_service.create_carousel_post(
                     instagram_user_id=request.instagram_user_id,
                     page_access_token=page_access_token,
@@ -2239,73 +2232,88 @@ async def create_unified_instagram_post(
                     image_urls=single_media_urls
                 )
             else:  # photo
+                logger.info(f"Posting PHOTO to Instagram: user_id={request.instagram_user_id}, image_url={final_image_url}, caption={final_caption}")
                 post_result = await instagram_service.create_post(
                     instagram_user_id=request.instagram_user_id,
                     page_access_token=page_access_token,
                     caption=final_caption,
                     image_url=final_image_url
                 )
+            logger.info(f"Instagram API response: {post_result}")
         except Exception as service_error:
             logger.error(f"Error posting to Instagram: {service_error}")
-            # Save failed post to single_instagram_posts
-            failed_post = SingleInstagramPost(
-                user_id=current_user.id,
-                social_account_id=account.id,
-                post_type=single_post_type,
-                media_url=single_media_urls,
-                caption=final_caption,
-                use_ai_image=bool(request.use_ai_image),
-                use_ai_text=bool(request.use_ai_text),
-                platform_post_id=None,
-                status="failed",
-                error_message=str(service_error),
-                published_at=None
-            )
-            db.add(failed_post)
-            db.commit()
-            db.refresh(failed_post)
+            # Save failed post to single_instagram_posts (if table exists)
+            try:
+                from app.models.single_instagram_post import SingleInstagramPost
+                failed_post = SingleInstagramPost(
+                    user_id=current_user.id,
+                    social_account_id=account.id,
+                    post_type=single_post_type,
+                    media_url=single_media_urls,
+                    caption=final_caption,
+                    use_ai_image=bool(request.use_ai_image),
+                    use_ai_text=bool(request.use_ai_text),
+                    platform_post_id=None,
+                    status="failed",
+                    error_message=str(service_error),
+                    published_at=None
+                )
+                db.add(failed_post)
+                db.commit()
+                db.refresh(failed_post)
+            except Exception as db_error:
+                logger.warning(f"Could not save failed post to single_instagram_posts: {db_error}")
             raise HTTPException(status_code=500, detail=f"Failed to create Instagram post: {str(service_error)}")
-        
-        # Save successful post to single_instagram_posts
+        # Save successful post to single_instagram_posts (if table exists)
         if post_result and post_result.get("success"):
-            new_single_post = SingleInstagramPost(
-                user_id=current_user.id,
-                social_account_id=account.id,
-                post_type=single_post_type,
-                media_url=single_media_urls,
-                caption=final_caption,
-                use_ai_image=bool(request.use_ai_image),
-                use_ai_text=bool(request.use_ai_text),
-                platform_post_id=post_result.get("post_id"),
-                status="published",
-                error_message=None,
-                published_at=datetime.utcnow()
-            )
-            db.add(new_single_post)
-            db.commit()
-            db.refresh(new_single_post)
+            try:
+                from app.models.single_instagram_post import SingleInstagramPost
+                new_single_post = SingleInstagramPost(
+                    user_id=current_user.id,
+                    social_account_id=account.id,
+                    post_type=single_post_type,
+                    media_url=single_media_urls,
+                    caption=final_caption,
+                    use_ai_image=bool(request.use_ai_image),
+                    use_ai_text=bool(request.use_ai_text),
+                    platform_post_id=post_result.get("post_id"),
+                    status="published",
+                    error_message=None,
+                    published_at=datetime.utcnow()
+                )
+                db.add(new_single_post)
+                db.commit()
+                db.refresh(new_single_post)
+            except Exception as db_error:
+                logger.warning(f"Could not save successful post to single_instagram_posts: {db_error}")
         else:
             # Save failed post if not already saved
-            failed_post = SingleInstagramPost(
-                user_id=current_user.id,
-                social_account_id=account.id,
-                post_type=single_post_type,
-                media_url=single_media_urls,
-                caption=final_caption,
-                use_ai_image=bool(request.use_ai_image),
-                use_ai_text=bool(request.use_ai_text),
-                platform_post_id=None,
-                status="failed",
-                error_message=post_result.get("error") if post_result else "Unknown error",
-                published_at=None
+            try:
+                from app.models.single_instagram_post import SingleInstagramPost
+                failed_post = SingleInstagramPost(
+                    user_id=current_user.id,
+                    social_account_id=account.id,
+                    post_type=single_post_type,
+                    media_url=single_media_urls,
+                    caption=final_caption,
+                    use_ai_image=bool(request.use_ai_image),
+                    use_ai_text=bool(request.use_ai_text),
+                    platform_post_id=None,
+                    status="failed",
+                    error_message=post_result.get("error") if post_result else "Unknown error",
+                    published_at=None
+                )
+                db.add(failed_post)
+                db.commit()
+                db.refresh(failed_post)
+            except Exception as db_error:
+                logger.warning(f"Could not save failed post to single_instagram_posts: {db_error}")
+            # Return full error from Instagram API
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create Instagram post: {post_result.get('error', 'Unknown error')}"
             )
-            db.add(failed_post)
-            db.commit()
-            db.refresh(failed_post)
-            raise HTTPException(status_code=500, detail=f"Failed to create Instagram post: {post_result.get('error', 'Unknown error')}")
-        
         logger.info(f"✅ Saved single post to single_instagram_posts table. Post type: {single_post_type}")
-        
         return SuccessResponse(
             message="Instagram post created successfully",
             data={
@@ -2318,28 +2326,31 @@ async def create_unified_instagram_post(
                 "ai_generated_image": request.use_ai_image
             }
         )
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error creating unified Instagram post: {str(e)}", exc_info=True)
-        # Save failed post to single_instagram_posts
-        failed_post = SingleInstagramPost(
-            user_id=current_user.id,
-            social_account_id=account.id if 'account' in locals() and account else None,
-            post_type=single_post_type if 'single_post_type' in locals() else None,
-            media_url=single_media_urls if 'single_media_urls' in locals() else [],
-            caption=final_caption if 'final_caption' in locals() else None,
-            use_ai_image=bool(request.use_ai_image) if 'request' in locals() else False,
-            use_ai_text=bool(request.use_ai_text) if 'request' in locals() else False,
-            platform_post_id=None,
-            status="failed",
-            error_message=str(e),
-            published_at=None
-        )
-        db.add(failed_post)
-        db.commit()
-        db.refresh(failed_post)
+        # Save failed post to single_instagram_posts (if table exists)
+        try:
+            from app.models.single_instagram_post import SingleInstagramPost
+            failed_post = SingleInstagramPost(
+                user_id=current_user.id if 'current_user' in locals() and current_user else None,
+                social_account_id=account.id if 'account' in locals() and account else None,
+                post_type=single_post_type if 'single_post_type' in locals() else None,
+                media_url=single_media_urls if 'single_media_urls' in locals() else [],
+                caption=final_caption if 'final_caption' in locals() else None,
+                use_ai_image=bool(request.use_ai_image) if 'request' in locals() else False,
+                use_ai_text=bool(request.use_ai_text) if 'request' in locals() else False,
+                platform_post_id=None,
+                status="failed",
+                error_message=str(e),
+                published_at=None
+            )
+            db.add(failed_post)
+            db.commit()
+            db.refresh(failed_post)
+        except Exception as db_error:
+            logger.warning(f"Could not save failed post to single_instagram_posts: {db_error}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create Instagram post: {str(e)}"

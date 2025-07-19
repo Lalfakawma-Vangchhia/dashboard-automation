@@ -29,9 +29,14 @@ async def verify_webhook(
 
 @router.post("/webhook/instagram")
 async def instagram_webhook(request: Request):
-    """Handle incoming Instagram webhooks for comments and DMs."""
     try:
-        data = await request.json()
+        raw_body = await request.body()
+        logger.info(f"[WEBHOOK] Raw incoming body: {raw_body}")
+        try:
+            data = await request.json()
+        except Exception as json_err:
+            logger.error(f"[WEBHOOK] Failed to parse JSON: {json_err}")
+            return {"status": "error", "detail": "Invalid JSON"}
         logger.info(f"📨 Received Instagram webhook: {data}")
         
         # Check if this is a comment webhook
