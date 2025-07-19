@@ -251,6 +251,18 @@ const InstagramPage = () => {
     // eslint-disable-next-line
   }, [INSTAGRAM_APP_ID, isAuthenticated]);
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      setInstagramAccounts([]); // Clear previous state
+      setSelectedAccount('');
+      setIsConnected(false);
+      setActiveTab('connect');
+      setMessage('');
+      // Fetch new user's Instagram accounts
+      apiClient.getInstagramAccounts().then(accounts => setInstagramAccounts(accounts));
+    }
+  }, [isAuthenticated]);
+
   // --- Instagram Connect ---
   const handleConnectInstagram = async (accessToken = fbAccessToken) => {
     if (!isAuthenticated) {

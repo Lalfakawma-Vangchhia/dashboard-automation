@@ -168,9 +168,10 @@ async def get_social_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all connected social media accounts for the current user."""
+    """Get all connected Instagram accounts for the current user."""
     accounts = db.query(SocialAccount).filter(
-        SocialAccount.user_id == current_user.id
+        SocialAccount.user_id == current_user.id,
+        SocialAccount.platform == "instagram"
     ).all()
     result = []
     for acc in accounts:
@@ -1365,13 +1366,23 @@ async def connect_instagram(
         # Save Instagram accounts to database
         connected_accounts = []
         for ig_account in instagram_accounts:
-            # Check if account already exists
+            # Check if account already exists for any user
+            existing_account_any_user = db.query(SocialAccount).filter(
+                SocialAccount.platform == "instagram",
+                SocialAccount.platform_user_id == ig_account["platform_id"]
+            ).first()
+            if existing_account_any_user and existing_account_any_user.user_id != current_user.id:
+                # Prevent connecting the same Instagram account to a different user
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Instagram account @{ig_account['username']} is already connected to another user."
+                )
+            # Check if account already exists for this user
             existing_account = db.query(SocialAccount).filter(
                 SocialAccount.user_id == current_user.id,
                 SocialAccount.platform == "instagram",
                 SocialAccount.platform_user_id == ig_account["platform_id"]
             ).first()
-            
             if existing_account:
                 # Update existing account
                 existing_account.username = ig_account["username"]

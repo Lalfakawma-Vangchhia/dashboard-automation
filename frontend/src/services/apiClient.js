@@ -494,6 +494,14 @@ class ApiClient {
     return this.request('/social/accounts');
   }
 
+  async getInstagramAccounts() {
+    // This assumes your backend endpoint is /api/social/accounts and returns only Instagram accounts
+    const response = await this.request('/social/accounts', {
+      method: 'GET',
+    });
+    return response;
+  }
+
   // Get posts
   async getPosts(platform = null, status = null, limit = 50) {
     const params = new URLSearchParams();
